@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "avd-feed-connect"
+version = "0.3.8"
+description = "Native Linux client for Azure Virtual Desktop and Windows 365 (feed discovery + connect)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Shakeel Osmani" }]
+keywords = ["AVD", "RDP", "Azure Virtual Desktop", "Windows 365", "FreeRDP"]
+
+# Runtime GUI deps (PyGObject: Gtk 4, WebKit 6, Secret 1) come from the system /
+# GNOME runtime, not PyPI, so they are intentionally not listed here.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/shakeelosmani/avd_feed_connect"
+Issues = "https://github.com/shakeelosmani/avd_feed_connect/issues"
+
+[project.scripts]
+avd-feed = "avd_feed_connect.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
