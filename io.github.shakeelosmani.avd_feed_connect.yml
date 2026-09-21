@@ -144,6 +144,9 @@ modules:
   - name: avd-feed-connect
     buildsystem: simple
     build-commands:
+      - install -d /app/share/avd-feed-connect
+      - cp -r src/avd_feed_connect /app/share/avd-feed-connect/avd_feed_connect
+      - find /app/share/avd-feed-connect/avd_feed_connect -name __pycache__ -type d -exec rm -rf {} +
       - install -Dm755 src/avdfeed.py       /app/share/avd-feed-connect/avdfeed.py
       - install -Dm755 src/avd_feed_gui.py  /app/share/avd-feed-connect/avd_feed_gui.py
       - install -Dm755 avd-feed-connect     /app/bin/avd-feed-connect

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Windows-App-style desktop client for Azure Virtual Desktop on Linux.
 
-A GTK4 + WebKitGTK 6.0 front-end over the feed-discovery logic in avdfeed.py:
+A GTK4 + WebKitGTK 6.0 front-end over the feed-discovery logic in the
+avd_feed_connect package (see its client.AvdClient facade):
   * in-app interactive sign-in (embedded WebKit view — the same auth-code+PKCE
     flow the native client uses, so Conditional Access lets it through; it
     catches the …/oauth2/nativeclient?code=… redirect automatically, no paste).
@@ -54,9 +55,15 @@ gi.require_version("WebKit", "6.0")
 from gi.repository import Gtk, GLib, Gdk, Gio  # noqa: E402
 from gi.repository import WebKit  # noqa: E402
 
-# shared feed/auth logic lives next to this file (installed together)
+# The feed/auth package is installed as a sibling directory next to this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import avdfeed as af  # noqa: E402
+from avd_feed_connect import config, http  # noqa: E402
+from avd_feed_connect.auth.oauth import _b64url  # noqa: E402
+from avd_feed_connect.client import AvdClient  # noqa: E402
+
+# One process-wide client holds the signed-in session (UPN, tokens); the GUI
+# reads and updates it through this single instance.
+af = AvdClient()
 
 APP_ID = "io.github.shakeelosmani.avd_feed_connect"
 APP_NAME = "AVD Feed + Connect Linux"
@@ -64,10 +71,10 @@ APP_VERSION = "0.3.8"
 
 # Persist the last discovered workspaces so reopening shows them instantly
 # (like the Windows App), instead of bouncing to sign-in on every launch.
-WS_CACHE = os.path.join(os.path.dirname(af.CACHE), "workspaces.json")
+WS_CACHE = os.path.join(os.path.dirname(config.CACHE), "workspaces.json")
 # Per-resource icon PNGs, so the saved workspace view looks exactly like the
 # live one even before (or without) a fresh token — like the Windows App.
-ICON_DIR = os.path.join(os.path.dirname(af.CACHE), "icons")
+ICON_DIR = os.path.join(os.path.dirname(config.CACHE), "icons")
 
 
 def _icon_path(res_id):
@@ -75,7 +82,7 @@ def _icon_path(res_id):
 
 # In-app display/connection preferences (⋯ → Settings…). Environment variables,
 # if set, still override these for power users.
-SETTINGS_FILE = os.path.join(os.path.dirname(af.CACHE), "settings.json")
+SETTINGS_FILE = os.path.join(os.path.dirname(config.CACHE), "settings.json")
 SCALE_LABELS = ["Automatic (match display)", "100%", "125%", "150%",
                 "175%", "200%", "250%", "300%"]
 SCALE_VALUES = ["auto", "100", "125", "150", "175", "200", "250", "300"]
@@ -104,7 +111,7 @@ def _save_ws_cache(resources):
     try:
         os.makedirs(os.path.dirname(WS_CACHE), exist_ok=True)
         with open(WS_CACHE, "w") as f:
-            json.dump({"upn": af.UPN, "resources": resources}, f)
+            json.dump({"upn": af.upn, "resources": resources}, f)
     except OSError:
         pass
 
@@ -113,20 +120,20 @@ def _load_ws_cache():
     try:
         with open(WS_CACHE) as f:
             d = json.load(f)
-        if d.get("upn") and not af.UPN:
-            af.UPN = d["upn"]
+        if d.get("upn") and not af.upn:
+            af.upn = d["upn"]
         return d.get("resources") or []
     except (OSError, ValueError):
         return []
 
 
 def _bearer_bytes(url, token):
-    """Binary GET with the approved UA headers (for icons; af._get decodes text)."""
+    """Binary GET with the approved UA headers (for icons; http.get decodes text)."""
     req = urllib.request.Request(url)
     req.add_header("Authorization", "Bearer " + token)
     req.add_header("Accept", "*/*")
-    req.add_header("User-Agent", af.MS_USER_AGENT)
-    req.add_header("X-MS-User-Agent", af.MS_USER_AGENT)
+    req.add_header("User-Agent", config.MS_USER_AGENT)
+    req.add_header("X-MS-User-Agent", config.MS_USER_AGENT)
     with urllib.request.urlopen(req, timeout=30) as r:
         return r.read()
 
@@ -301,7 +308,7 @@ class AvdApp(Gtk.Application):
         # no sign-in). Used for documentation screenshots so they carry no real
         # account or org details. Never triggered in normal use.
         if os.environ.get("AVD_DEMO"):
-            af.UPN = "alex@contoso.com"
+            af.upn = "alex@contoso.com"
             demo = [
                 {"id": "d1", "title": "Finance Desktop", "type": "Desktop",
                  "tenant": "Contoso", "icon32": None},
@@ -649,7 +656,7 @@ class AvdApp(Gtk.Application):
             if not silent:
                 self._show("signin")
             return False
-        tok = af._refresh(rt)
+        tok = af.oauth._refresh(rt)
         if not tok:
             if not silent:
                 self._error("Session expired — please sign in again.")
@@ -677,7 +684,7 @@ class AvdApp(Gtk.Application):
         """Status-bar text for a failed silent refresh, naming the real cause
         when it's the tenant's Conditional Access sign-in-frequency policy
         (AADSTS70043) rather than anything the app can fix."""
-        err = af.LAST_REFRESH_ERROR
+        err = af.last_refresh_error
         if "AADSTS70043" in err or "sign-in frequency" in err:
             return ("Showing saved workspaces · your organization requires signing "
                     "in again (Conditional Access sign-in frequency)")
@@ -693,7 +700,7 @@ class AvdApp(Gtk.Application):
         session. Stored in our app data dir (user-private); the refresh token
         itself lives in the keyring, not here."""
         if self._web_session_obj is None:
-            d = os.path.join(os.path.dirname(af.CACHE), "webview")
+            d = os.path.join(os.path.dirname(config.CACHE), "webview")
             os.makedirs(d, exist_ok=True)
             self._web_session_obj = WebKit.NetworkSession.new(
                 d, os.path.join(d, "cache"))
@@ -712,8 +719,8 @@ class AvdApp(Gtk.Application):
         if self._signin_dlg is not None:
             old, self._signin_dlg = self._signin_dlg, None
             old.destroy()
-        verifier = af._b64url(secrets.token_bytes(64))
-        challenge = af._b64url(hashlib.sha256(verifier.encode()).digest())
+        verifier = _b64url(secrets.token_bytes(64))
+        challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
         state = secrets.token_urlsafe(16)
         # Always show the account picker (prompt=select_account). It is the
         # known-good flow: it bypasses Azure AD Seamless SSO — which needs a
@@ -724,14 +731,14 @@ class AvdApp(Gtk.Application):
         # click (login_hint without a prompt, or prompt=login) reintroduced
         # both of those bugs, so we don't.
         params = {
-            "client_id": af.CLIENT_ID, "response_type": "code",
-            "redirect_uri": af.REDIRECT, "scope": af.SCOPE,
+            "client_id": config.CLIENT_ID, "response_type": "code",
+            "redirect_uri": config.REDIRECT, "scope": config.SCOPE,
             "code_challenge": challenge, "code_challenge_method": "S256",
             "state": state, "prompt": "select_account",
         }
-        if af.UPN:
-            params["login_hint"] = af.UPN   # preselect the known account in the picker
-        url = af.LOGIN + "/authorize?" + urllib.parse.urlencode(params)
+        if af.upn:
+            params["login_hint"] = af.upn   # preselect the known account in the picker
+        url = config.LOGIN + "/authorize?" + urllib.parse.urlencode(params)
 
         dlg = Gtk.Window(title="Sign in", transient_for=self.win, modal=True)
         dlg.set_default_size(520, 640)
@@ -768,7 +775,7 @@ class AvdApp(Gtk.Application):
             if dtype != WebKit.PolicyDecisionType.NAVIGATION_ACTION:
                 return False
             uri = decision.get_navigation_action().get_request().get_uri()
-            if uri.startswith(af.REDIRECT) and "code=" in uri:
+            if uri.startswith(config.REDIRECT) and "code=" in uri:
                 decision.ignore()
                 qs = urllib.parse.parse_qs(urllib.parse.urlparse(uri).query)
                 got_code[0] = True
@@ -789,9 +796,9 @@ class AvdApp(Gtk.Application):
         dlg.present()
 
     def _exchange(self, code, verifier):
-        st, tok = af._post(af.LOGIN + "/token", {
-            "grant_type": "authorization_code", "client_id": af.CLIENT_ID,
-            "code": code, "redirect_uri": af.REDIRECT, "scope": af.SCOPE,
+        st, tok = http.post(config.LOGIN + "/token", {
+            "grant_type": "authorization_code", "client_id": config.CLIENT_ID,
+            "code": code, "redirect_uri": config.REDIRECT, "scope": config.SCOPE,
             "code_verifier": verifier})
         if st != 200:
             self._pending_launch = None
@@ -813,10 +820,10 @@ class AvdApp(Gtk.Application):
         # Forget the persisted Microsoft SSO cookies too, so sign-out is total
         # (next sign-in is a fresh password+MFA, not a cookie click-through).
         self._web_session_obj = None
-        shutil.rmtree(os.path.join(os.path.dirname(af.CACHE), "webview"),
+        shutil.rmtree(os.path.join(os.path.dirname(config.CACHE), "webview"),
                       ignore_errors=True)
         self._pending_launch = None
-        af.UPN = "" if not os.environ.get("AVD_UPN") else af.UPN
+        af.upn = "" if not os.environ.get("AVD_UPN") else af.upn
         with self._token_lock:
             self.token = None
             self._deadline = 0.0
@@ -869,7 +876,7 @@ class AvdApp(Gtk.Application):
             ch = self._make_tile(res)
             self.grid.append(ch)
             self._tiles.append(ch)
-        who = af.UPN or "your account"
+        who = af.upn or "your account"
         self.status.set_text(f"Signed in as {who}")
         n = len(resources)
         self._count_lbl.set_text(f"{n} resource" + ("" if n == 1 else "s"))
@@ -1058,15 +1065,15 @@ class AvdApp(Gtk.Application):
         # ignored where unsupported, so always safe.
         env.setdefault("SDL_RENDER_VSYNC", "1")
         env.setdefault("SDL_VIDEO_DOUBLE_BUFFER", "1")
-        if af.SDL_LIBS and os.path.isdir(af.SDL_LIBS):
-            env["LD_LIBRARY_PATH"] = af.SDL_LIBS + (
+        if config.SDL_LIBS and os.path.isdir(config.SDL_LIBS):
+            env["LD_LIBRARY_PATH"] = config.SDL_LIBS + (
                 os.pathsep + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
-        os.makedirs(af.OUT, exist_ok=True)
+        os.makedirs(config.OUT, exist_ok=True)
         safe = _re.sub(r"[^A-Za-z0-9]+", "_", res["title"])[:40]
-        logpath = os.path.join(af.OUT, f"session_{safe}.log")
-        argv = [af.SDL, path, "/gateway:type:arm", "/sec:aad"]
-        if af.UPN:
-            argv.append(f"/u:{af.UPN}")
+        logpath = os.path.join(config.OUT, f"session_{safe}.log")
+        argv = [config.SDL, path, "/gateway:type:arm", "/sec:aad"]
+        if af.upn:
+            argv.append(f"/u:{af.upn}")
         # Remote scale follows the client's display scale (HiDPI → 200%, standard/
         # ultrawide → 100%); AVD_SCALE overrides. Multi-monitor and any other flag
         # are opt-in via AVD_EXTRA_ARGS (e.g. "/multimon /gfx"), until a settings UI.
