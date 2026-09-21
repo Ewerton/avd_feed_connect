@@ -62,6 +62,7 @@ from avd_feed_connect.auth.oauth import _b64url  # noqa: E402
 from avd_feed_connect.client import AvdClient  # noqa: E402
 from avd_feed_connect.gui.theme import CSS_BASE, PALETTE_DARK, PALETTE_LIGHT  # noqa: E402
 from avd_feed_connect.gui.demo import demo_resources  # noqa: E402
+from avd_feed_connect.gui import storage  # noqa: E402
 
 # One process-wide client holds the signed-in session (UPN, tokens); the GUI
 # reads and updates it through this single instance.
@@ -71,73 +72,6 @@ APP_ID = "io.github.shakeelosmani.avd_feed_connect"
 APP_NAME = "AVD Feed + Connect Linux"
 APP_VERSION = "0.3.8"
 
-# Persist the last discovered workspaces so reopening shows them instantly
-# (like the Windows App), instead of bouncing to sign-in on every launch.
-WS_CACHE = os.path.join(os.path.dirname(config.CACHE), "workspaces.json")
-# Per-resource icon PNGs, so the saved workspace view looks exactly like the
-# live one even before (or without) a fresh token — like the Windows App.
-ICON_DIR = os.path.join(os.path.dirname(config.CACHE), "icons")
-
-
-def _icon_path(res_id):
-    return os.path.join(ICON_DIR, _re.sub(r"[^A-Za-z0-9_.-]", "_", res_id) + ".png")
-
-# In-app display/connection preferences (⋯ → Settings…). Environment variables,
-# if set, still override these for power users.
-SETTINGS_FILE = os.path.join(os.path.dirname(config.CACHE), "settings.json")
-SCALE_LABELS = ["Automatic (match display)", "100%", "125%", "150%",
-                "175%", "200%", "250%", "300%"]
-SCALE_VALUES = ["auto", "100", "125", "150", "175", "200", "250", "300"]
-MULTIMON_LABELS = ["Automatic (match monitors)", "Single monitor", "All monitors"]
-MULTIMON_VALUES = ["auto", "off", "on"]
-
-
-def _load_settings():
-    try:
-        with open(SETTINGS_FILE) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
-
-
-def _save_settings(d):
-    try:
-        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-        with open(SETTINGS_FILE, "w") as f:
-            json.dump(d, f)
-    except OSError:
-        pass
-
-
-def _save_ws_cache(resources):
-    try:
-        os.makedirs(os.path.dirname(WS_CACHE), exist_ok=True)
-        with open(WS_CACHE, "w") as f:
-            json.dump({"upn": af.upn, "resources": resources}, f)
-    except OSError:
-        pass
-
-
-def _load_ws_cache():
-    try:
-        with open(WS_CACHE) as f:
-            d = json.load(f)
-        if d.get("upn") and not af.upn:
-            af.upn = d["upn"]
-        return d.get("resources") or []
-    except (OSError, ValueError):
-        return []
-
-
-def _bearer_bytes(url, token):
-    """Binary GET with the approved UA headers (for icons; http.get decodes text)."""
-    req = urllib.request.Request(url)
-    req.add_header("Authorization", "Bearer " + token)
-    req.add_header("Accept", "*/*")
-    req.add_header("User-Agent", config.MS_USER_AGENT)
-    req.add_header("X-MS-User-Agent", config.MS_USER_AGENT)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return r.read()
 
 
 
@@ -165,7 +99,7 @@ class AvdApp(Gtk.Application):
         self._signout_item = None
         self._scale = 1             # client display scale factor (1 or 2 = HiDPI)
         self._n_monitors = 1        # how many monitors the compositor reports
-        self._settings = _load_settings()   # {"_default": {...}, "<res id>": {...}}
+        self._settings = storage.load_settings()   # {"_default": {...}, "<res id>": {...}}
         self._pending_launch = None  # resource id to connect to once sign-in completes
         self._signin_dlg = None      # the open sign-in window, if any
         self._web_session_obj = None  # shared persistent WebKit session (SSO cookies)
@@ -192,7 +126,9 @@ class AvdApp(Gtk.Application):
         # If we have previously discovered workspaces, show them immediately and
         # refresh the token + feed silently in the background (Windows-App-style
         # persistent session). Only a first run with no cache shows sign-in.
-        cached = _load_ws_cache()
+        cached, cached_upn = storage.load_ws_cache()
+        if cached_upn and not af.upn:
+            af.upn = cached_upn
         if cached:
             self._populate(cached)
             self._set_status(f"{len(cached)} workspaces · refreshing…")
@@ -226,7 +162,7 @@ class AvdApp(Gtk.Application):
         except Exception:
             self._set_status("Showing saved workspaces (couldn't refresh)")
             return
-        _save_ws_cache(resources)
+        storage.save_ws_cache(resources, af.upn)
         GLib.idle_add(self._populate, resources)
 
     def _is_dark(self):
@@ -256,7 +192,7 @@ class AvdApp(Gtk.Application):
     def _set_theme(self, key):
         """Persist the appearance choice (system/light/dark) and apply it live."""
         self._settings["_theme"] = key
-        _save_settings(self._settings)
+        storage.save_settings(self._settings)
         self._apply_theme()
 
     def _build_ui(self):
@@ -676,11 +612,11 @@ class AvdApp(Gtk.Application):
         # Manual sign-out is the ONLY thing that clears the session + workspaces.
         af.clear_token_cache()            # keyring entry + any fallback file
         try:
-            if os.path.exists(WS_CACHE):
-                os.remove(WS_CACHE)
+            if os.path.exists(storage.WS_CACHE):
+                os.remove(storage.WS_CACHE)
         except OSError:
             pass
-        shutil.rmtree(ICON_DIR, ignore_errors=True)
+        shutil.rmtree(storage.ICON_DIR, ignore_errors=True)
         # Forget the persisted Microsoft SSO cookies too, so sign-out is total
         # (next sign-in is a fresh password+MFA, not a cookie click-through).
         self._web_session_obj = None
@@ -710,7 +646,10 @@ class AvdApp(Gtk.Application):
         threading.Thread(target=self._load_feed, daemon=True).start()
 
     def _load_feed(self):
-        have_cache = bool(_load_ws_cache())
+        cached, cached_upn = storage.load_ws_cache()
+        if cached_upn and not af.upn:
+            af.upn = cached_upn
+        have_cache = bool(cached)
         if not self._ensure_token():
             if not have_cache:
                 self._show("signin")
@@ -726,7 +665,7 @@ class AvdApp(Gtk.Application):
             else:
                 self._error("Feed error: " + str(e)); self._show("signin")
             return
-        _save_ws_cache(resources)
+        storage.save_ws_cache(resources, af.upn)
         GLib.idle_add(self._populate, resources)
 
     def _clear_tiles(self):
@@ -852,12 +791,12 @@ class AvdApp(Gtk.Application):
             url = res.get("icon32")
             if not url:
                 continue
-            path = _icon_path(res["id"])
+            path = storage.icon_path(res["id"])
             data = None
             if token:
                 try:
-                    data = _bearer_bytes(url, token)
-                    os.makedirs(ICON_DIR, exist_ok=True)
+                    data = storage.bearer_bytes(url, token)
+                    os.makedirs(storage.ICON_DIR, exist_ok=True)
                     with open(path, "wb") as f:
                         f.write(data)
                 except Exception:
@@ -1144,14 +1083,14 @@ class AvdApp(Gtk.Application):
         for m in ("top", "bottom", "start", "end"):
             getattr(box, f"set_margin_{m}")(16)
 
-        scale_dd = Gtk.DropDown(model=Gtk.StringList.new(SCALE_LABELS))
+        scale_dd = Gtk.DropDown(model=Gtk.StringList.new(storage.SCALE_LABELS))
         sv = cur.get("scale", "auto")
-        scale_dd.set_selected(SCALE_VALUES.index(sv) if sv in SCALE_VALUES else 0)
+        scale_dd.set_selected(storage.SCALE_VALUES.index(sv) if sv in storage.SCALE_VALUES else 0)
         box.append(self._form_row("Display scale", scale_dd))
 
-        mm_dd = Gtk.DropDown(model=Gtk.StringList.new(MULTIMON_LABELS))
+        mm_dd = Gtk.DropDown(model=Gtk.StringList.new(storage.MULTIMON_LABELS))
         mv = cur.get("multimon", "auto")
-        mm_dd.set_selected(MULTIMON_VALUES.index(mv) if mv in MULTIMON_VALUES else 0)
+        mm_dd.set_selected(storage.MULTIMON_VALUES.index(mv) if mv in storage.MULTIMON_VALUES else 0)
         box.append(self._form_row("Monitors", mm_dd))
 
         extra_entry = Gtk.Entry()
@@ -1174,8 +1113,8 @@ class AvdApp(Gtk.Application):
 
         def do_save(*_):
             entry = {
-                "scale": SCALE_VALUES[scale_dd.get_selected()],
-                "multimon": MULTIMON_VALUES[mm_dd.get_selected()],
+                "scale": storage.SCALE_VALUES[scale_dd.get_selected()],
+                "multimon": storage.MULTIMON_VALUES[mm_dd.get_selected()],
                 "extra_args": extra_entry.get_text().strip(),
             }
             # drop an all-default entry so the file stays tidy
@@ -1184,7 +1123,7 @@ class AvdApp(Gtk.Application):
                 self._settings.pop(key, None)
             else:
                 self._settings[key] = entry
-            _save_settings(self._settings)
+            storage.save_settings(self._settings)
             dlg.destroy()
             self._set_status("Settings saved — applies to your next connection")
         save.connect("clicked", do_save)
