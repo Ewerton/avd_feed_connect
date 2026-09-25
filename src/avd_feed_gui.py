@@ -853,6 +853,18 @@ class AvdApp(Gtk.Application):
             self._error(str(e))
             self._set_tile_state(res["id"], "● Failed", "state-ended")
             return
+        # Host pools not set up for Entra ID RDP auth (their feed .rdp lacks
+        # "enablerdsaadauth:i:1") reject /sec:aad with HYBRID_REQUIRED_BY_SERVER
+        # (issue #3), so use /sec:nla there and let FreeRDP prompt for the account
+        # credentials itself. NLA against a pure Entra-joined host still can't
+        # succeed from Linux (PKU2U needs the Windows CloudAP/PRT), but a
+        # hybrid-AD-joined host works with on-prem-AD credentials. The gateway
+        # keeps using the Entra token either way.
+        try:
+            rdp_text = open(path).read()
+        except OSError:
+            rdp_text = ""
+        nla = "enablerdsaadauth:i:1" not in rdp_text.lower()
         env = dict(os.environ)
         # sdl-freerdp (SDL3) and FreeRDP's own AAD webview are unstable on native
         # Wayland (#2: "Error 71 dispatching to Wayland display"). Force X11 /
@@ -875,7 +887,7 @@ class AvdApp(Gtk.Application):
         os.makedirs(config.OUT, exist_ok=True)
         safe = _re.sub(r"[^A-Za-z0-9]+", "_", res["title"])[:40]
         logpath = os.path.join(config.OUT, f"session_{safe}.log")
-        argv = [config.SDL, path, "/gateway:type:arm", "/sec:aad"]
+        argv = [config.SDL, path, "/gateway:type:arm", "/sec:nla" if nla else "/sec:aad"]
         if af.upn:
             argv.append(f"/u:{af.upn}")
         # Remote scale follows the client's display scale (HiDPI → 200%, standard/
