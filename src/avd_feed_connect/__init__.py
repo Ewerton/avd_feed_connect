@@ -17,4 +17,4 @@ from .client import AvdClient
 
 __all__ = ["AvdClient", "__version__"]
 
-__version__ = "0.3.8"
+__version__ = "0.4.0"

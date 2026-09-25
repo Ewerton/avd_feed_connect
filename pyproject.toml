@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "avd-feed-connect"
-version = "0.3.8"
+version = "0.4.0"
 description = "Native Linux client for Azure Virtual Desktop and Windows 365 (feed discovery + connect)"
 readme = "README.md"
 requires-python = ">=3.10"

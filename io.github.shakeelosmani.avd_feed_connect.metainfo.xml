@@ -60,6 +60,19 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.0" date="2026-09-25">
+      <description>
+        <ul>
+          <li>The Monitors setting is now honored: choosing Single monitor no
+          longer opens the session spanning all your displays (it previously
+          always used multi-monitor). All monitors and Automatic work as
+          expected too.</li>
+          <li>The webcam indicator light now turns off when you stop the camera
+          in a call, instead of staying lit until you disconnect (updated the
+          bundled FreeRDP).</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.8" date="2026-09-17">
       <description>
         <p>Updated to the GNOME 51 runtime for the latest system libraries and
