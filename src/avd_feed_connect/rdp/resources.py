@@ -21,3 +21,31 @@ def download_rdp(token, res):
     with open(path, "w") as f:
         f.write(rdp)
     return path
+
+
+def set_rdp_multimon(path, enabled):
+    """Force the .rdp's ``use multimon`` property to match the chosen setting.
+
+    AVD feed .rdp files ship ``use multimon:i:1`` and that connection-file
+    property overrides sdl-freerdp's ``-multimon`` / ``/multimon`` CLI flag, so
+    the in-app Single/All-monitors choice is only honored by rewriting the file
+    itself (the CLI flag alone is ignored). Rewrites in place; safe to no-op on
+    any I/O error.
+    """
+    val = "1" if enabled else "0"
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+        out, found = [], False
+        for ln in lines:
+            if ln.lower().startswith("use multimon:i:"):
+                out.append(f"use multimon:i:{val}")
+                found = True
+            else:
+                out.append(ln)
+        if not found:
+            out.append(f"use multimon:i:{val}")
+        with open(path, "w") as f:
+            f.write("\n".join(out) + "\n")
+    except OSError:
+        pass

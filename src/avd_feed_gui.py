@@ -60,6 +60,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from avd_feed_connect import config, http  # noqa: E402
 from avd_feed_connect.auth.oauth import _b64url  # noqa: E402
 from avd_feed_connect.client import AvdClient  # noqa: E402
+from avd_feed_connect.rdp import set_rdp_multimon  # noqa: E402
 from avd_feed_connect.gui.theme import CSS_BASE, PALETTE_DARK, PALETTE_LIGHT  # noqa: E402
 from avd_feed_connect.gui.demo import demo_resources  # noqa: E402
 from avd_feed_connect.gui import storage  # noqa: E402
@@ -900,6 +901,9 @@ class AvdApp(Gtk.Application):
         else:
             setting = self._eff("multimon", res)      # "on"/"off"/None
             want_multimon = (setting == "on") if setting else (self._n_monitors > 1)
+        # The feed .rdp's "use multimon:i:1" overrides the sdl-freerdp CLI flag,
+        # so honor the choice by rewriting the file itself (issue #4).
+        set_rdp_multimon(path, want_multimon)
         # Don't fight an explicit choice already present in the extra flags.
         if "multimon" not in extra:
             argv.append("/multimon" if want_multimon else "-multimon")
