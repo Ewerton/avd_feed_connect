@@ -895,6 +895,12 @@ class AvdApp(Gtk.Application):
         # are opt-in via AVD_EXTRA_ARGS (e.g. "/multimon /gfx"), until a settings UI.
         # --- display config: env var > per-resource/default setting > auto ---
         extra = self._eff_extra(res)
+        # AVD NLA host pools reject FreeRDP's default "AzureAD" domain — both
+        # reporters on issue #3 connect only with the domain cleared. Send an
+        # empty domain so the user just types their password (a rare pool that
+        # needs "AzureAD" can override with /d: in Advanced flags).
+        if nla and "/d:" not in extra:
+            argv.append("/d:")
         scale = os.environ.get("AVD_SCALE") or self._eff("scale", res) \
             or str(100 * max(1, self._scale))
         argv += ["/sound:sys:pulse", "/microphone", "/cert:ignore",
