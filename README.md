@@ -154,6 +154,22 @@ workspace's **Advanced flags**. The session then starts windowed (toggle
 fullscreen any time with Ctrl+Shift+Enter). Fullscreen and `/dynamic-resolution`
 can't be combined, so the app only forces fullscreen when this flag isn't set.
 
+**Advanced flags reference.** The **Advanced flags** field takes raw
+`sdl-freerdp` options, appended verbatim to the connection. Anything FreeRDP
+accepts works; these are the ones people reach for most:
+
+| Flag | What it does |
+|---|---|
+| `/dynamic-resolution` | Open a resizable window; the remote resolution follows the window instead of a fixed fullscreen size (see above). |
+| `/d:AzureAD` | Override the NLA logon domain (the app sends an empty domain by default; a few host pools want `AzureAD` or an on-prem domain instead). |
+| `/multimon` / `-multimon` | Force multi-monitor on / off, overriding the automatic monitor-count choice. Same as the **Monitors** setting. |
+| `/gfx` | Force the GFX (RemoteFX/H.264) graphics pipeline — smoother video on capable host pools. |
+| `/network:auto` | Let FreeRDP auto-detect the link and tune codecs/latency for it. |
+| `-themes` / `-wallpaper` | Drop remote desktop themes / wallpaper to save bandwidth on slow links. |
+
+Flags set here take precedence over the app's automatic choices, and
+`AVD_EXTRA_ARGS` (below) is appended after them for scripting.
+
 #### Advanced: environment-variable overrides
 
 These are for power users / scripting and win over the in-app settings. Set them
