@@ -60,6 +60,20 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.1" date="2026-09-28">
+      <description>
+        <ul>
+          <li>Support host pools that use username/password (NLA) sign-in
+          instead of Microsoft Entra ID RDP authentication. The app now detects
+          these and connects with an empty domain so the logon is accepted;
+          FreeRDP prompts for your password at connect time.</li>
+          <li>New optional resizable window: add <code>/dynamic-resolution</code>
+          to a workspace's Advanced flags and the session opens in a window
+          whose remote resolution follows it as you resize, instead of always
+          starting fullscreen (toggle fullscreen with Ctrl+Shift+Enter).</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-09-25">
       <description>
         <ul>
