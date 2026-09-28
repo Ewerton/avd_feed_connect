@@ -147,6 +147,13 @@ override it, the easiest way is right inside the app.
 Precedence is: a workspace's own setting → your Default settings → automatic
 detection. (Environment variables, below, override even these — for scripting.)
 
+**Resizable window (dynamic resolution):** by default the session opens
+fullscreen. If you'd rather have a resizable window whose remote resolution
+follows the window as you resize it, add `/dynamic-resolution` to that
+workspace's **Advanced flags**. The session then starts windowed (toggle
+fullscreen any time with Ctrl+Shift+Enter). Fullscreen and `/dynamic-resolution`
+can't be combined, so the app only forces fullscreen when this flag isn't set.
+
 #### Advanced: environment-variable overrides
 
 These are for power users / scripting and win over the in-app settings. Set them
