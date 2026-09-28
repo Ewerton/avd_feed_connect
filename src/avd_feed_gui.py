@@ -904,13 +904,20 @@ class AvdApp(Gtk.Application):
         scale = os.environ.get("AVD_SCALE") or self._eff("scale", res) \
             or str(100 * max(1, self._scale))
         argv += ["/sound:sys:pulse", "/microphone", "/cert:ignore",
-                 "/f", f"/scale-desktop:{scale}", "/log-level:info",
+                 f"/scale-desktop:{scale}", "/log-level:info",
                  # bandwidth/quality + resilience + keepalive:
                  "+compression", "+fonts",
                  "+auto-reconnect", "/auto-reconnect-max-retries:10",
                  # inject fake input so the Azure gateway doesn't idle-drop the
                  # session (which would otherwise force a reconnect + token re-mint)
                  "/prevent-session-lock:120"]
+        # /dynamic-resolution (the remote desktop follows the client window size)
+        # needs a resizable window; FreeRDP's /f fullscreen breaks it (FreeRDP
+        # #10759). So only force fullscreen when the user hasn't opted into
+        # dynamic resolution via Advanced flags — then they get a resizable window
+        # and can still toggle fullscreen with Ctrl+Shift+Enter (issue #5).
+        if "dynamic-resolution" not in extra:
+            argv.append("/f")
         mm = os.environ.get("AVD_MULTIMON", "").strip().lower()
         if mm in ("1", "on", "true", "yes"):
             want_multimon = True
