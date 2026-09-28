@@ -170,6 +170,36 @@ accepts works; these are the ones people reach for most:
 Flags set here take precedence over the app's automatic choices, and
 `AVD_EXTRA_ARGS` (below) is appended after them for scripting.
 
+**How to enter them.** Type the flags into the **Advanced flags** field exactly
+as you would on a command line — **separated by spaces**, and you can combine as
+many as you like. Flags that take a value use a colon, with no space around it.
+Examples (each line is what you'd put in the field):
+
+```
+/dynamic-resolution
+```
+Resizable window, remote follows the window size.
+
+```
+/dynamic-resolution /gfx
+```
+Resizable window **and** the H.264 graphics pipeline — two flags, space-separated.
+
+```
+/d:AzureAD
+```
+Force the NLA logon domain to `AzureAD` (for a host pool that rejects the empty
+default).
+
+```
+/dynamic-resolution /gfx -wallpaper -themes
+```
+A slow-link profile: resizable window, GFX codec, and strip the remote wallpaper
+and themes to save bandwidth — four flags at once.
+
+If a value ever contains a space, quote it like on a shell (e.g.
+`/drive:home,"/my folder"`); the field is parsed with the same rules.
+
 #### Advanced: environment-variable overrides
 
 These are for power users / scripting and win over the in-app settings. Set them
