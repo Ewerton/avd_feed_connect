@@ -853,6 +853,18 @@ class AvdApp(Gtk.Application):
             self._error(str(e))
             self._set_tile_state(res["id"], "● Failed", "state-ended")
             return
+        # Host pools not set up for Entra ID RDP auth (their feed .rdp lacks
+        # "enablerdsaadauth:i:1") reject /sec:aad with HYBRID_REQUIRED_BY_SERVER
+        # (issue #3), so use /sec:nla there and let FreeRDP prompt for the account
+        # credentials itself. NLA against a pure Entra-joined host still can't
+        # succeed from Linux (PKU2U needs the Windows CloudAP/PRT), but a
+        # hybrid-AD-joined host works with on-prem-AD credentials. The gateway
+        # keeps using the Entra token either way.
+        try:
+            rdp_text = open(path).read()
+        except OSError:
+            rdp_text = ""
+        nla = "enablerdsaadauth:i:1" not in rdp_text.lower()
         env = dict(os.environ)
         # sdl-freerdp (SDL3) and FreeRDP's own AAD webview are unstable on native
         # Wayland (#2: "Error 71 dispatching to Wayland display"). Force X11 /
@@ -875,7 +887,7 @@ class AvdApp(Gtk.Application):
         os.makedirs(config.OUT, exist_ok=True)
         safe = _re.sub(r"[^A-Za-z0-9]+", "_", res["title"])[:40]
         logpath = os.path.join(config.OUT, f"session_{safe}.log")
-        argv = [config.SDL, path, "/gateway:type:arm", "/sec:aad"]
+        argv = [config.SDL, path, "/gateway:type:arm", "/sec:nla" if nla else "/sec:aad"]
         if af.upn:
             argv.append(f"/u:{af.upn}")
         # Remote scale follows the client's display scale (HiDPI → 200%, standard/
@@ -883,16 +895,29 @@ class AvdApp(Gtk.Application):
         # are opt-in via AVD_EXTRA_ARGS (e.g. "/multimon /gfx"), until a settings UI.
         # --- display config: env var > per-resource/default setting > auto ---
         extra = self._eff_extra(res)
+        # AVD NLA host pools reject FreeRDP's default "AzureAD" domain — both
+        # reporters on issue #3 connect only with the domain cleared. Send an
+        # empty domain so the user just types their password (a rare pool that
+        # needs "AzureAD" can override with /d: in Advanced flags).
+        if nla and "/d:" not in extra:
+            argv.append("/d:")
         scale = os.environ.get("AVD_SCALE") or self._eff("scale", res) \
             or str(100 * max(1, self._scale))
         argv += ["/sound:sys:pulse", "/microphone", "/cert:ignore",
-                 "/f", f"/scale-desktop:{scale}", "/log-level:info",
+                 f"/scale-desktop:{scale}", "/log-level:info",
                  # bandwidth/quality + resilience + keepalive:
                  "+compression", "+fonts",
                  "+auto-reconnect", "/auto-reconnect-max-retries:10",
                  # inject fake input so the Azure gateway doesn't idle-drop the
                  # session (which would otherwise force a reconnect + token re-mint)
                  "/prevent-session-lock:120"]
+        # /dynamic-resolution (the remote desktop follows the client window size)
+        # needs a resizable window; FreeRDP's /f fullscreen breaks it (FreeRDP
+        # #10759). So only force fullscreen when the user hasn't opted into
+        # dynamic resolution via Advanced flags — then they get a resizable window
+        # and can still toggle fullscreen with Ctrl+Shift+Enter (issue #5).
+        if "dynamic-resolution" not in extra:
+            argv.append("/f")
         mm = os.environ.get("AVD_MULTIMON", "").strip().lower()
         if mm in ("1", "on", "true", "yes"):
             want_multimon = True
