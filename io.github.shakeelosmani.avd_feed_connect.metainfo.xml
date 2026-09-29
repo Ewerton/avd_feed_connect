@@ -60,6 +60,16 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.3" date="2026-09-29">
+      <description>
+        <ul>
+          <li>Fixed pasting from the local machine into the remote session:
+          copied text now transfers correctly instead of silently failing (and
+          no longer risks aborting the connection). Updated the bundled FreeRDP
+          to the 3.32.1 release, which includes the clipboard fixes.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.2" date="2026-09-29">
       <description>
         <ul>
