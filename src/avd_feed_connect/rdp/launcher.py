@@ -7,9 +7,37 @@ a PTY, so it can resolve the connection-time AAD prompt silently — see
 """
 
 import os
+import shlex
 import subprocess
 
 from .. import config
+from .resources import set_rdp_dynamic_resolution, set_rdp_multimon
+
+
+def build_display_args(path, extra, want_multimon):
+    """Resolve GUI display flags and conflicting settings in the feed file."""
+    options = shlex.split(extra)
+    dynamic = False
+    for option in options:
+        if option in ("/dynamic-resolution", "+dynamic-resolution"):
+            dynamic = True
+        elif option == "-dynamic-resolution":
+            dynamic = False
+        elif option in ("/multimon", "+multimon", "/multimon:on", "/multimon:force"):
+            want_multimon = True
+        elif option in ("-multimon", "/multimon:off"):
+            want_multimon = False
+
+    if dynamic:
+        set_rdp_dynamic_resolution(path)
+        want_multimon = False
+        options = [option for option in options
+                   if option.lstrip("/+-").partition(":")[0]
+                   not in ("smart-sizing", "f", "multimon")]
+
+    set_rdp_multimon(path, want_multimon)
+    return ([] if dynamic else ["/f"]) + [
+        "/multimon" if want_multimon else "-multimon"] + options
 
 
 def build_argv(sdl, path, upn):

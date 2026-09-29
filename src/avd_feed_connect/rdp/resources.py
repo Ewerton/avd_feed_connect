@@ -23,6 +23,18 @@ def download_rdp(token, res):
     return path
 
 
+def set_rdp_dynamic_resolution(path):
+    """Remove feed settings that conflict with a dynamically resized window."""
+    with open(path) as source:
+        lines = source.read().splitlines()
+    properties = {"smart sizing": "0", "screen mode id": "1"}
+    lines = [line for line in lines
+             if line.partition(":")[0].strip().lower() not in properties]
+    lines.extend(f"{name}:i:{value}" for name, value in properties.items())
+    with open(path, "w") as destination:
+        destination.write("\n".join(lines) + "\n")
+
+
 def set_rdp_multimon(path, enabled):
     """Force the .rdp's ``use multimon`` property to match the chosen setting.
 

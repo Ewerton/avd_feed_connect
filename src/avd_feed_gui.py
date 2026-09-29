@@ -36,7 +36,6 @@ import urllib.parse
 import hashlib
 import base64
 import secrets
-import shlex
 import shutil
 import subprocess
 import pty
@@ -60,7 +59,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from avd_feed_connect import config, http  # noqa: E402
 from avd_feed_connect.auth.oauth import _b64url  # noqa: E402
 from avd_feed_connect.client import AvdClient  # noqa: E402
-from avd_feed_connect.rdp import set_rdp_multimon  # noqa: E402
+from avd_feed_connect.rdp.launcher import build_display_args  # noqa: E402
 from avd_feed_connect.gui.theme import CSS_BASE, PALETTE_DARK, PALETTE_LIGHT  # noqa: E402
 from avd_feed_connect.gui.demo import demo_resources  # noqa: E402
 from avd_feed_connect.gui import storage  # noqa: E402
@@ -911,13 +910,6 @@ class AvdApp(Gtk.Application):
                  # inject fake input so the Azure gateway doesn't idle-drop the
                  # session (which would otherwise force a reconnect + token re-mint)
                  "/prevent-session-lock:120"]
-        # /dynamic-resolution (the remote desktop follows the client window size)
-        # needs a resizable window; FreeRDP's /f fullscreen breaks it (FreeRDP
-        # #10759). So only force fullscreen when the user hasn't opted into
-        # dynamic resolution via Advanced flags — then they get a resizable window
-        # and can still toggle fullscreen with Ctrl+Shift+Enter (issue #5).
-        if "dynamic-resolution" not in extra:
-            argv.append("/f")
         mm = os.environ.get("AVD_MULTIMON", "").strip().lower()
         if mm in ("1", "on", "true", "yes"):
             want_multimon = True
@@ -926,17 +918,14 @@ class AvdApp(Gtk.Application):
         else:
             setting = self._eff("multimon", res)      # "on"/"off"/None
             want_multimon = (setting == "on") if setting else (self._n_monitors > 1)
-        # The feed .rdp's "use multimon:i:1" overrides the sdl-freerdp CLI flag,
-        # so honor the choice by rewriting the file itself (issue #4).
-        set_rdp_multimon(path, want_multimon)
-        # Don't fight an explicit choice already present in the extra flags.
-        if "multimon" not in extra:
-            argv.append("/multimon" if want_multimon else "-multimon")
-        if extra:
-            try:
-                argv += shlex.split(extra)
-            except ValueError:
-                pass
+        try:
+            argv += build_display_args(path, extra, want_multimon)
+        except (OSError, ValueError) as error:
+            child._launching = False
+            self._set_connecting(res["id"], res["title"], False)
+            self._set_tile_state(res["id"], "● Failed", "state-ended")
+            self._error(f"Could not prepare display settings: {error}")
+            return
         # Launch under a PTY. With FreeRDP built WITHOUT its own AAD webview,
         # /sec:aad prints "Browse to: <url>" and reads the redirect URL back
         # from stdin — but only when it thinks it's attached to a terminal, so
