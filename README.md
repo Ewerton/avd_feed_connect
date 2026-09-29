@@ -152,7 +152,10 @@ fullscreen. If you'd rather have a resizable window whose remote resolution
 follows the window as you resize it, add `/dynamic-resolution` to that
 workspace's **Advanced flags**. The session then starts windowed (toggle
 fullscreen any time with Ctrl+Shift+Enter). Fullscreen and `/dynamic-resolution`
-can't be combined, so the app only forces fullscreen when this flag isn't set.
+can't be combined, so the app only forces fullscreen when this flag isn't set;
+it also clears the feed's smart-sizing property, which would otherwise conflict.
+Dynamic resolution runs on a **single monitor** — when it's set, the app ignores
+multi-monitor selection for that session (leave it off to span monitors).
 
 **Advanced flags reference.** The **Advanced flags** field takes raw
 `sdl-freerdp` options, appended verbatim to the connection. Anything FreeRDP
