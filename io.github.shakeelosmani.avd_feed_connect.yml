@@ -135,13 +135,17 @@ modules:
     sources:
       - type: git
         url: https://github.com/FreeRDP/FreeRDP.git
-        # Upstream master at the PR #13481 merge (8b5d1c40): carries the pulse
-        # hot-unplug + rdpsnd busy-loop fixes (PR #13334), the rdpecam
-        # stream-drain LED fix (3.32.0), and the rdpecam media-type validation
-        # fix (249d74364a) that makes V4L camera redirection work. Camera
-        # redirection is a build option, enabled via config-opts.
-        # (Pin a real tag once one includes the media-type fix — 3.32.0 predates it.)
-        commit: 8b5d1c4097f6ea79da1783eaa16a4e8f9edbf908
+        # FreeRDP 3.32.1, the first tag containing everything we previously
+        # pinned master (8b5d1c40) for: the pulse hot-unplug + rdpsnd
+        # busy-loop fixes (PR #13334), the rdpecam stream-drain LED fix
+        # (3.32.0), and the rdpecam media-type validation fix (249d74364a) that
+        # makes V4L camera redirection work. It also picks up later cliprdr
+        # fixes (#13496, #13527); the master snapshot failed local → remote
+        # paste ("No synthesizer for format CF_RAW") and could abort on a WinPR
+        # assert (#7). Camera redirection is a build option, enabled via
+        # config-opts.
+        tag: 3.32.1
+        commit: bf217a504e54cc719880c228e82353382cd7d4fa
 
   # ---- the app itself ----------------------------------------------------
   - name: avd-feed-connect
