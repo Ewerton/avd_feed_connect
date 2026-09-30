@@ -54,7 +54,11 @@ class FeedClient:
             url = feed.get("FeedURL")
             if not url:
                 continue
-            st, _, body = http.get(url, token, config.ACCEPT_FEED)
+            try:
+                st, _, body = http.get(url, token, config.ACCEPT_FEED)
+            except ValueError as e:
+                print(f"  ! skipping tenant feed: {e}", file=sys.stderr)
+                continue
             _save_raw(f"01_feed{fi}_{re.sub(r'[^A-Za-z0-9]+','_',feed.get('TenantDisplayName','t'))[:40]}.xml", body)
             if st != 200:
                 print(f"  ! tenant feed {feed.get('TenantDisplayName','?')} "
