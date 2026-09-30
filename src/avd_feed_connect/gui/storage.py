@@ -15,7 +15,7 @@ import os
 import re
 import urllib.request
 
-from .. import config
+from .. import config, http
 
 WS_CACHE = os.path.join(os.path.dirname(config.CACHE), "workspaces.json")
 ICON_DIR = os.path.join(os.path.dirname(config.CACHE), "icons")
@@ -72,6 +72,7 @@ def load_ws_cache():
 
 def bearer_bytes(url, token):
     """Binary GET with the approved UA headers (for icons; http.get decodes text)."""
+    http.check_trusted(url)
     req = urllib.request.Request(url)
     req.add_header("Authorization", "Bearer " + token)
     req.add_header("Accept", "*/*")
