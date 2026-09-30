@@ -147,6 +147,62 @@ override it, the easiest way is right inside the app.
 Precedence is: a workspace's own setting → your Default settings → automatic
 detection. (Environment variables, below, override even these — for scripting.)
 
+**Resizable window (dynamic resolution):** by default the session opens
+fullscreen. If you'd rather have a resizable window whose remote resolution
+follows the window as you resize it, add `/dynamic-resolution` to that
+workspace's **Advanced flags**. The session then starts windowed (toggle
+fullscreen any time with Ctrl+Shift+Enter). Fullscreen and `/dynamic-resolution`
+can't be combined, so the app only forces fullscreen when this flag isn't set;
+it also clears the feed's smart-sizing property, which would otherwise conflict.
+Dynamic resolution runs on a **single monitor** — when it's set, the app ignores
+multi-monitor selection for that session (leave it off to span monitors).
+
+**Advanced flags reference.** The **Advanced flags** field takes raw
+`sdl-freerdp` options, appended verbatim to the connection. Anything FreeRDP
+accepts works; these are the ones people reach for most:
+
+| Flag | What it does |
+|---|---|
+| `/dynamic-resolution` | Open a resizable window; the remote resolution follows the window instead of a fixed fullscreen size (see above). |
+| `/d:AzureAD` | Override the NLA logon domain (the app sends an empty domain by default; a few host pools want `AzureAD` or an on-prem domain instead). |
+| `/multimon` / `-multimon` | Force multi-monitor on / off, overriding the automatic monitor-count choice. Same as the **Monitors** setting. |
+| `/gfx` | Force the GFX (RemoteFX/H.264) graphics pipeline — smoother video on capable host pools. |
+| `/network:auto` | Let FreeRDP auto-detect the link and tune codecs/latency for it. |
+| `-themes` / `-wallpaper` | Drop remote desktop themes / wallpaper to save bandwidth on slow links. |
+
+Flags set here take precedence over the app's automatic choices, and
+`AVD_EXTRA_ARGS` (below) is appended after them for scripting.
+
+**How to enter them.** Type the flags into the **Advanced flags** field exactly
+as you would on a command line — **separated by spaces**, and you can combine as
+many as you like. Flags that take a value use a colon, with no space around it.
+Examples (each line is what you'd put in the field):
+
+```
+/dynamic-resolution
+```
+Resizable window, remote follows the window size.
+
+```
+/dynamic-resolution /gfx
+```
+Resizable window **and** the H.264 graphics pipeline — two flags, space-separated.
+
+```
+/d:AzureAD
+```
+Force the NLA logon domain to `AzureAD` (for a host pool that rejects the empty
+default).
+
+```
+/dynamic-resolution /gfx -wallpaper -themes
+```
+A slow-link profile: resizable window, GFX codec, and strip the remote wallpaper
+and themes to save bandwidth — four flags at once.
+
+If a value ever contains a space, quote it like on a shell (e.g.
+`/drive:home,"/my folder"`); the field is parsed with the same rules.
+
 #### Advanced: environment-variable overrides
 
 These are for power users / scripting and win over the in-app settings. Set them
@@ -198,6 +254,24 @@ re-auth is usually a **single click** on your account (no password re-entry)
 rather than a full password+MFA — unless the policy is strict enough to demand
 fresh credentials. The workspace you double-clicked then connects on its own
 once you're back in.
+
+## Host pools that use NLA (username + password)
+
+Some AVD host pools aren't set up for **Microsoft Entra ID RDP authentication**
+(their feed `.rdp` has no `enablerdsaadauth`). The app detects this and connects
+with **NLA** instead of the token flow: it passes your account as the username
+and an **empty domain**, and FreeRDP prompts you for your password each time you
+connect (it isn't stored). Your Entra sign-in is still used for the feed and the
+gateway — the password is only for the session-host logon.
+
+- **Hybrid (Active Directory) joined** hosts work this way with your normal
+  domain password.
+- A **pure Entra-ID-joined** host that requires NLA **can't be reached from
+  Linux** — that path (PKU2U) needs Windows-only components. The fix is to have
+  your admin enable *Microsoft Entra ID authentication* on the host pool, after
+  which sign-in is token-based with no password prompt.
+- If your host pool needs a specific domain instead of the empty default, set it
+  in a workspace's **Advanced flags** (e.g. `/d:AzureAD`).
 
 ## Status
 

@@ -60,6 +60,56 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.3" date="2026-09-29">
+      <description>
+        <ul>
+          <li>Fixed pasting from the local machine into the remote session:
+          copied text now transfers correctly instead of silently failing (and
+          no longer risks aborting the connection). Updated the bundled FreeRDP
+          to the 3.32.1 release, which includes the clipboard fixes.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.4.2" date="2026-09-29">
+      <description>
+        <ul>
+          <li>Fixed the resizable-window (<code>/dynamic-resolution</code>) option
+          for host pools whose feed enables smart sizing: the session no longer
+          exits at startup with "smart sizing and dynamic resolution are mutually
+          exclusive", and it now reliably opens windowed instead of fullscreen.</li>
+          <li>Advanced flags that are typed incorrectly (for example an
+          unterminated quote) now show a clear error instead of being silently
+          ignored.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.4.1" date="2026-09-28">
+      <description>
+        <ul>
+          <li>Support host pools that use username/password (NLA) sign-in
+          instead of Microsoft Entra ID RDP authentication. The app now detects
+          these and connects with an empty domain so the logon is accepted;
+          FreeRDP prompts for your password at connect time.</li>
+          <li>New optional resizable window: add <code>/dynamic-resolution</code>
+          to a workspace's Advanced flags and the session opens in a window
+          whose remote resolution follows it as you resize, instead of always
+          starting fullscreen (toggle fullscreen with Ctrl+Shift+Enter).</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.4.0" date="2026-09-25">
+      <description>
+        <ul>
+          <li>The Monitors setting is now honored: choosing Single monitor no
+          longer opens the session spanning all your displays (it previously
+          always used multi-monitor). All monitors and Automatic work as
+          expected too.</li>
+          <li>The webcam indicator light now turns off when you stop the camera
+          in a call, instead of staying lit until you disconnect (updated the
+          bundled FreeRDP).</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.8" date="2026-09-17">
       <description>
         <p>Updated to the GNOME 51 runtime for the latest system libraries and

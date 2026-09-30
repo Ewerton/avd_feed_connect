@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Windows-App-style desktop client for Azure Virtual Desktop on Linux.
 
-A GTK4 + WebKitGTK 6.0 front-end over the feed-discovery logic in avdfeed.py:
+A GTK4 + WebKitGTK 6.0 front-end over the feed-discovery logic in the
+avd_feed_connect package (see its client.AvdClient facade):
   * in-app interactive sign-in (embedded WebKit view — the same auth-code+PKCE
     flow the native client uses, so Conditional Access lets it through; it
     catches the …/oauth2/nativeclient?code=… redirect automatically, no paste).
@@ -35,7 +36,6 @@ import urllib.parse
 import hashlib
 import base64
 import secrets
-import shlex
 import shutil
 import subprocess
 import pty
@@ -54,210 +54,26 @@ gi.require_version("WebKit", "6.0")
 from gi.repository import Gtk, GLib, Gdk, Gio  # noqa: E402
 from gi.repository import WebKit  # noqa: E402
 
-# shared feed/auth logic lives next to this file (installed together)
+# The feed/auth package is installed as a sibling directory next to this file.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import avdfeed as af  # noqa: E402
+from avd_feed_connect import config, http  # noqa: E402
+from avd_feed_connect.auth.oauth import _b64url  # noqa: E402
+from avd_feed_connect.client import AvdClient  # noqa: E402
+from avd_feed_connect.rdp.launcher import build_display_args  # noqa: E402
+from avd_feed_connect.gui.theme import CSS_BASE, PALETTE_DARK, PALETTE_LIGHT  # noqa: E402
+from avd_feed_connect.gui.demo import demo_resources  # noqa: E402
+from avd_feed_connect.gui import storage  # noqa: E402
+
+# One process-wide client holds the signed-in session (UPN, tokens); the GUI
+# reads and updates it through this single instance.
+af = AvdClient()
 
 APP_ID = "io.github.shakeelosmani.avd_feed_connect"
 APP_NAME = "AVD Feed + Connect Linux"
-APP_VERSION = "0.3.8"
-
-# Persist the last discovered workspaces so reopening shows them instantly
-# (like the Windows App), instead of bouncing to sign-in on every launch.
-WS_CACHE = os.path.join(os.path.dirname(af.CACHE), "workspaces.json")
-# Per-resource icon PNGs, so the saved workspace view looks exactly like the
-# live one even before (or without) a fresh token — like the Windows App.
-ICON_DIR = os.path.join(os.path.dirname(af.CACHE), "icons")
+APP_VERSION = "0.4.3"
 
 
-def _icon_path(res_id):
-    return os.path.join(ICON_DIR, _re.sub(r"[^A-Za-z0-9_.-]", "_", res_id) + ".png")
 
-# In-app display/connection preferences (⋯ → Settings…). Environment variables,
-# if set, still override these for power users.
-SETTINGS_FILE = os.path.join(os.path.dirname(af.CACHE), "settings.json")
-SCALE_LABELS = ["Automatic (match display)", "100%", "125%", "150%",
-                "175%", "200%", "250%", "300%"]
-SCALE_VALUES = ["auto", "100", "125", "150", "175", "200", "250", "300"]
-MULTIMON_LABELS = ["Automatic (match monitors)", "Single monitor", "All monitors"]
-MULTIMON_VALUES = ["auto", "off", "on"]
-
-
-def _load_settings():
-    try:
-        with open(SETTINGS_FILE) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
-
-
-def _save_settings(d):
-    try:
-        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-        with open(SETTINGS_FILE, "w") as f:
-            json.dump(d, f)
-    except OSError:
-        pass
-
-
-def _save_ws_cache(resources):
-    try:
-        os.makedirs(os.path.dirname(WS_CACHE), exist_ok=True)
-        with open(WS_CACHE, "w") as f:
-            json.dump({"upn": af.UPN, "resources": resources}, f)
-    except OSError:
-        pass
-
-
-def _load_ws_cache():
-    try:
-        with open(WS_CACHE) as f:
-            d = json.load(f)
-        if d.get("upn") and not af.UPN:
-            af.UPN = d["upn"]
-        return d.get("resources") or []
-    except (OSError, ValueError):
-        return []
-
-
-def _bearer_bytes(url, token):
-    """Binary GET with the approved UA headers (for icons; af._get decodes text)."""
-    req = urllib.request.Request(url)
-    req.add_header("Authorization", "Bearer " + token)
-    req.add_header("Accept", "*/*")
-    req.add_header("User-Agent", af.MS_USER_AGENT)
-    req.add_header("X-MS-User-Agent", af.MS_USER_AGENT)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return r.read()
-
-
-# ---- theme / styling -------------------------------------------------------
-# GTK CSS is not web CSS: no var(), no transform, no ::before. We define the
-# palette with @define-color (a light set and a dark set) and pick which to load
-# based on the desktop's dark preference, so the look is consistent across
-# distros/themes instead of inheriting whatever GTK theme is active.
-PALETTE_LIGHT = """
-@define-color avd_bg #F4F6F9;
-@define-color avd_surface #FFFFFF;
-@define-color avd_surface2 #F1F4F8;
-@define-color avd_border #E3E8EF;
-@define-color avd_border_strong #D3DAE3;
-@define-color avd_ink #1A2230;
-@define-color avd_muted #66707E;
-@define-color avd_faint #98A2B3;
-@define-color avd_accent #0E7CF4;
-@define-color avd_accent_ink #0B63C4;
-@define-color avd_ok #2FB86B;
-@define-color avd_warn #B87E00;
-"""
-PALETTE_DARK = """
-@define-color avd_bg #161A21;
-@define-color avd_surface #212630;
-@define-color avd_surface2 #2A303B;
-@define-color avd_border #353D49;
-@define-color avd_border_strong #48525F;
-@define-color avd_ink #F2F5FA;
-@define-color avd_muted #AEB8C6;
-@define-color avd_faint #7B8593;
-@define-color avd_accent #57A0FF;
-@define-color avd_accent_ink #8ABAFF;
-@define-color avd_ok #4FD08D;
-@define-color avd_warn #F2B838;
-"""
-CSS_BASE = """
-window.avd, .avd-page { background:@avd_bg; }
-.avd-page { background:@avd_bg; }
-
-headerbar.avd-header {
-  background:linear-gradient(to bottom, @avd_surface, @avd_surface2);
-  border-bottom:1px solid @avd_border; box-shadow:none; min-height:52px;
-  padding:6px 8px;
-}
-/* window controls (min/max/close) — keep them clearly visible in dark mode */
-headerbar.avd-header windowcontrols button,
-headerbar.avd-header .titlebutton { color:@avd_muted; background:none;
-  box-shadow:none; min-width:26px; min-height:26px; }
-headerbar.avd-header windowcontrols button:hover,
-headerbar.avd-header .titlebutton:hover { color:@avd_ink; background:alpha(@avd_ink,0.08); }
-.mark { min-width:34px; min-height:34px; border-radius:10px; color:#ffffff;
-  background:linear-gradient(145deg,#2D8BFF,#0E63D6);
-  box-shadow:0 3px 8px -2px alpha(#0E7CF4,0.55); }
-.brand-title { font-weight:800; font-size:15px; color:@avd_ink; }
-.brand-sub { font-size:11px; color:@avd_faint; }
-button.iconbtn { border-radius:9px; color:@avd_muted; background:none;
-  border:1px solid transparent; min-width:34px; min-height:34px; box-shadow:none; padding:0; }
-button.iconbtn:hover { background:@avd_bg; color:@avd_ink; border-color:@avd_border; }
-/* the class sits on the menubutton; style its inner button (else it keeps the
-   theme's default light background and the email text vanishes in dark mode) */
-menubutton.acct-btn { background:none; box-shadow:none; }
-menubutton.acct-btn > button { border-radius:20px; border:1px solid @avd_border;
-  background:@avd_bg; color:@avd_ink; padding:2px 10px 2px 3px; box-shadow:none; min-height:32px; }
-menubutton.acct-btn > button:hover { border-color:@avd_border_strong; background:@avd_bg; }
-.avatar { min-width:26px; min-height:26px; border-radius:20px;
-  background:linear-gradient(145deg,#5B6BFF,#7A3BE0); color:#ffffff;
-  font-weight:800; font-size:11px; }
-.acct-who { font-weight:600; font-size:12px; color:@avd_ink; }
-.caret { color:@avd_faint; }
-
-.section-h { font-weight:800; font-size:11px; letter-spacing:1px; color:@avd_muted; }
-.count { font-size:12px; color:@avd_faint; }
-
-flowbox, flowboxchild { background:none; padding:0; border:none; box-shadow:none; }
-flowboxchild:selected, flowboxchild:focus, flowboxchild:active { background:none; }
-
-.tile { background:@avd_surface; border:1px solid @avd_border; border-radius:15px;
-  padding:15px; box-shadow:0 1px 2px alpha(#121C2E,0.05);
-  transition:border-color 150ms, box-shadow 150ms, background 150ms; }
-.tile:hover { border-color:@avd_accent;
-  box-shadow:0 10px 24px -14px alpha(@avd_accent,0.55), 0 2px 6px -2px alpha(#121C2E,0.12); }
-.tile.tile-connected { border-color:alpha(@avd_ok,0.55); }
-flowboxchild:focus-visible .tile { outline:2px solid @avd_accent; outline-offset:2px; }
-
-.ic { min-width:50px; min-height:50px; border-radius:13px; background:@avd_surface2; }
-.ic.desktop { background:alpha(@avd_accent,0.13); }
-.ic.desktop image { color:@avd_accent; }
-.ic.app { background:alpha(@avd_warn,0.15); }
-.ic.app image { color:@avd_warn; }
-
-.tname { font-weight:800; font-size:14px; color:@avd_ink; }
-.chiplabel { font-size:10px; font-weight:700; letter-spacing:0.7px; color:@avd_muted; }
-.chipdot { min-width:6px; min-height:6px; border-radius:6px; background:@avd_accent; }
-.chip-app .chipdot { background:@avd_warn; }
-
-.status-pill { font-size:9px; font-weight:800; letter-spacing:0.5px; padding:3px 9px;
-  border-radius:20px; background:alpha(@avd_ok,0.15); color:@avd_ok; }
-.status-pill.pill-connecting { background:alpha(@avd_warn,0.18); color:@avd_warn; }
-
-.foot { background:@avd_surface; border-top:1px solid @avd_border; padding:8px 16px; }
-.status { color:@avd_muted; font-size:12px; }
-.ver { color:@avd_faint; font-size:11px; }
-.livedot { min-width:7px; min-height:7px; border-radius:7px; background:@avd_ok; }
-
-.connect-card { background:@avd_surface; border:1px solid @avd_border; border-radius:18px;
-  padding:26px 34px; box-shadow:0 20px 48px -14px alpha(#121C2E,0.4); }
-.connect-label { font-weight:700; font-size:14px; color:@avd_ink; }
-.connect-sub { font-size:12px; color:@avd_muted; }
-
-.bigmark { min-width:66px; min-height:66px; border-radius:19px; color:#ffffff;
-  background:linear-gradient(145deg,#2D8BFF,#0E63D6);
-  box-shadow:0 12px 30px -10px alpha(#0E7CF4,0.65); }
-.hero-title { font-weight:800; font-size:22px; color:@avd_ink; }
-.hero-sub { font-size:14px; color:@avd_muted; }
-.hero-note { font-size:11px; color:@avd_faint; }
-button.msbtn { background:@avd_accent; color:#ffffff; font-weight:700; font-size:14px;
-  border-radius:11px; padding:11px 20px; border:none;
-  box-shadow:0 8px 18px -6px alpha(@avd_accent,0.6); }
-button.msbtn:hover { background:@avd_accent_ink; }
-
-.settings-title { font-weight:800; font-size:17px; color:@avd_ink; }
-.settings-sub { font-size:12px; color:@avd_muted; }
-.field-label { font-weight:800; font-size:11px; letter-spacing:0.6px; color:@avd_muted; }
-.menu-head { font-weight:800; font-size:9px; letter-spacing:0.8px; color:@avd_faint; }
-box.linked > button { min-height:26px; font-size:12px; font-weight:700;
-  color:@avd_muted; background:@avd_bg; box-shadow:none; }
-box.linked > button:hover { color:@avd_ink; }
-box.linked > button:checked { background:@avd_accent; color:#ffffff; }
-"""
 
 
 class AvdApp(Gtk.Application):
@@ -283,7 +99,7 @@ class AvdApp(Gtk.Application):
         self._signout_item = None
         self._scale = 1             # client display scale factor (1 or 2 = HiDPI)
         self._n_monitors = 1        # how many monitors the compositor reports
-        self._settings = _load_settings()   # {"_default": {...}, "<res id>": {...}}
+        self._settings = storage.load_settings()   # {"_default": {...}, "<res id>": {...}}
         self._pending_launch = None  # resource id to connect to once sign-in completes
         self._signin_dlg = None      # the open sign-in window, if any
         self._web_session_obj = None  # shared persistent WebKit session (SSO cookies)
@@ -301,19 +117,8 @@ class AvdApp(Gtk.Application):
         # no sign-in). Used for documentation screenshots so they carry no real
         # account or org details. Never triggered in normal use.
         if os.environ.get("AVD_DEMO"):
-            af.UPN = "alex@contoso.com"
-            demo = [
-                {"id": "d1", "title": "Finance Desktop", "type": "Desktop",
-                 "tenant": "Contoso", "icon32": None},
-                {"id": "d2", "title": "Design Studio", "type": "Desktop",
-                 "tenant": "Contoso", "icon32": None},
-                {"id": "d3", "title": "Ops Console", "type": "RemoteApp",
-                 "tenant": "Contoso", "icon32": None},
-                {"id": "d4", "title": "Dev Sandbox", "type": "Desktop",
-                 "tenant": "Contoso", "icon32": None},
-                {"id": "d5", "title": "DR Failover", "type": "Desktop",
-                 "tenant": "Contoso", "icon32": None},
-            ]
+            af.upn = "alex@contoso.com"
+            demo = demo_resources()
             self._populate(demo)
             self._set_status("Signed in as alex@contoso.com")
             self._set_tile_state("d2", "", "state-connected")
@@ -321,7 +126,9 @@ class AvdApp(Gtk.Application):
         # If we have previously discovered workspaces, show them immediately and
         # refresh the token + feed silently in the background (Windows-App-style
         # persistent session). Only a first run with no cache shows sign-in.
-        cached = _load_ws_cache()
+        cached, cached_upn = storage.load_ws_cache()
+        if cached_upn and not af.upn:
+            af.upn = cached_upn
         if cached:
             self._populate(cached)
             self._set_status(f"{len(cached)} workspaces · refreshing…")
@@ -355,7 +162,7 @@ class AvdApp(Gtk.Application):
         except Exception:
             self._set_status("Showing saved workspaces (couldn't refresh)")
             return
-        _save_ws_cache(resources)
+        storage.save_ws_cache(resources, af.upn)
         GLib.idle_add(self._populate, resources)
 
     def _is_dark(self):
@@ -385,7 +192,7 @@ class AvdApp(Gtk.Application):
     def _set_theme(self, key):
         """Persist the appearance choice (system/light/dark) and apply it live."""
         self._settings["_theme"] = key
-        _save_settings(self._settings)
+        storage.save_settings(self._settings)
         self._apply_theme()
 
     def _build_ui(self):
@@ -649,7 +456,7 @@ class AvdApp(Gtk.Application):
             if not silent:
                 self._show("signin")
             return False
-        tok = af._refresh(rt)
+        tok = af.oauth._refresh(rt)
         if not tok:
             if not silent:
                 self._error("Session expired — please sign in again.")
@@ -677,7 +484,7 @@ class AvdApp(Gtk.Application):
         """Status-bar text for a failed silent refresh, naming the real cause
         when it's the tenant's Conditional Access sign-in-frequency policy
         (AADSTS70043) rather than anything the app can fix."""
-        err = af.LAST_REFRESH_ERROR
+        err = af.last_refresh_error
         if "AADSTS70043" in err or "sign-in frequency" in err:
             return ("Showing saved workspaces · your organization requires signing "
                     "in again (Conditional Access sign-in frequency)")
@@ -693,7 +500,7 @@ class AvdApp(Gtk.Application):
         session. Stored in our app data dir (user-private); the refresh token
         itself lives in the keyring, not here."""
         if self._web_session_obj is None:
-            d = os.path.join(os.path.dirname(af.CACHE), "webview")
+            d = os.path.join(os.path.dirname(config.CACHE), "webview")
             os.makedirs(d, exist_ok=True)
             self._web_session_obj = WebKit.NetworkSession.new(
                 d, os.path.join(d, "cache"))
@@ -712,8 +519,8 @@ class AvdApp(Gtk.Application):
         if self._signin_dlg is not None:
             old, self._signin_dlg = self._signin_dlg, None
             old.destroy()
-        verifier = af._b64url(secrets.token_bytes(64))
-        challenge = af._b64url(hashlib.sha256(verifier.encode()).digest())
+        verifier = _b64url(secrets.token_bytes(64))
+        challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
         state = secrets.token_urlsafe(16)
         # Always show the account picker (prompt=select_account). It is the
         # known-good flow: it bypasses Azure AD Seamless SSO — which needs a
@@ -724,14 +531,14 @@ class AvdApp(Gtk.Application):
         # click (login_hint without a prompt, or prompt=login) reintroduced
         # both of those bugs, so we don't.
         params = {
-            "client_id": af.CLIENT_ID, "response_type": "code",
-            "redirect_uri": af.REDIRECT, "scope": af.SCOPE,
+            "client_id": config.CLIENT_ID, "response_type": "code",
+            "redirect_uri": config.REDIRECT, "scope": config.SCOPE,
             "code_challenge": challenge, "code_challenge_method": "S256",
             "state": state, "prompt": "select_account",
         }
-        if af.UPN:
-            params["login_hint"] = af.UPN   # preselect the known account in the picker
-        url = af.LOGIN + "/authorize?" + urllib.parse.urlencode(params)
+        if af.upn:
+            params["login_hint"] = af.upn   # preselect the known account in the picker
+        url = config.LOGIN + "/authorize?" + urllib.parse.urlencode(params)
 
         dlg = Gtk.Window(title="Sign in", transient_for=self.win, modal=True)
         dlg.set_default_size(520, 640)
@@ -768,7 +575,7 @@ class AvdApp(Gtk.Application):
             if dtype != WebKit.PolicyDecisionType.NAVIGATION_ACTION:
                 return False
             uri = decision.get_navigation_action().get_request().get_uri()
-            if uri.startswith(af.REDIRECT) and "code=" in uri:
+            if uri.startswith(config.REDIRECT) and "code=" in uri:
                 decision.ignore()
                 qs = urllib.parse.parse_qs(urllib.parse.urlparse(uri).query)
                 got_code[0] = True
@@ -789,9 +596,9 @@ class AvdApp(Gtk.Application):
         dlg.present()
 
     def _exchange(self, code, verifier):
-        st, tok = af._post(af.LOGIN + "/token", {
-            "grant_type": "authorization_code", "client_id": af.CLIENT_ID,
-            "code": code, "redirect_uri": af.REDIRECT, "scope": af.SCOPE,
+        st, tok = http.post(config.LOGIN + "/token", {
+            "grant_type": "authorization_code", "client_id": config.CLIENT_ID,
+            "code": code, "redirect_uri": config.REDIRECT, "scope": config.SCOPE,
             "code_verifier": verifier})
         if st != 200:
             self._pending_launch = None
@@ -805,18 +612,18 @@ class AvdApp(Gtk.Application):
         # Manual sign-out is the ONLY thing that clears the session + workspaces.
         af.clear_token_cache()            # keyring entry + any fallback file
         try:
-            if os.path.exists(WS_CACHE):
-                os.remove(WS_CACHE)
+            if os.path.exists(storage.WS_CACHE):
+                os.remove(storage.WS_CACHE)
         except OSError:
             pass
-        shutil.rmtree(ICON_DIR, ignore_errors=True)
+        shutil.rmtree(storage.ICON_DIR, ignore_errors=True)
         # Forget the persisted Microsoft SSO cookies too, so sign-out is total
         # (next sign-in is a fresh password+MFA, not a cookie click-through).
         self._web_session_obj = None
-        shutil.rmtree(os.path.join(os.path.dirname(af.CACHE), "webview"),
+        shutil.rmtree(os.path.join(os.path.dirname(config.CACHE), "webview"),
                       ignore_errors=True)
         self._pending_launch = None
-        af.UPN = "" if not os.environ.get("AVD_UPN") else af.UPN
+        af.upn = "" if not os.environ.get("AVD_UPN") else af.upn
         with self._token_lock:
             self.token = None
             self._deadline = 0.0
@@ -839,7 +646,10 @@ class AvdApp(Gtk.Application):
         threading.Thread(target=self._load_feed, daemon=True).start()
 
     def _load_feed(self):
-        have_cache = bool(_load_ws_cache())
+        cached, cached_upn = storage.load_ws_cache()
+        if cached_upn and not af.upn:
+            af.upn = cached_upn
+        have_cache = bool(cached)
         if not self._ensure_token():
             if not have_cache:
                 self._show("signin")
@@ -855,7 +665,7 @@ class AvdApp(Gtk.Application):
             else:
                 self._error("Feed error: " + str(e)); self._show("signin")
             return
-        _save_ws_cache(resources)
+        storage.save_ws_cache(resources, af.upn)
         GLib.idle_add(self._populate, resources)
 
     def _clear_tiles(self):
@@ -869,7 +679,7 @@ class AvdApp(Gtk.Application):
             ch = self._make_tile(res)
             self.grid.append(ch)
             self._tiles.append(ch)
-        who = af.UPN or "your account"
+        who = af.upn or "your account"
         self.status.set_text(f"Signed in as {who}")
         n = len(resources)
         self._count_lbl.set_text(f"{n} resource" + ("" if n == 1 else "s"))
@@ -981,12 +791,12 @@ class AvdApp(Gtk.Application):
             url = res.get("icon32")
             if not url:
                 continue
-            path = _icon_path(res["id"])
+            path = storage.icon_path(res["id"])
             data = None
             if token:
                 try:
-                    data = _bearer_bytes(url, token)
-                    os.makedirs(ICON_DIR, exist_ok=True)
+                    data = storage.bearer_bytes(url, token)
+                    os.makedirs(storage.ICON_DIR, exist_ok=True)
                     with open(path, "wb") as f:
                         f.write(data)
                 except Exception:
@@ -1042,6 +852,18 @@ class AvdApp(Gtk.Application):
             self._error(str(e))
             self._set_tile_state(res["id"], "● Failed", "state-ended")
             return
+        # Host pools not set up for Entra ID RDP auth (their feed .rdp lacks
+        # "enablerdsaadauth:i:1") reject /sec:aad with HYBRID_REQUIRED_BY_SERVER
+        # (issue #3), so use /sec:nla there and let FreeRDP prompt for the account
+        # credentials itself. NLA against a pure Entra-joined host still can't
+        # succeed from Linux (PKU2U needs the Windows CloudAP/PRT), but a
+        # hybrid-AD-joined host works with on-prem-AD credentials. The gateway
+        # keeps using the Entra token either way.
+        try:
+            rdp_text = open(path).read()
+        except OSError:
+            rdp_text = ""
+        nla = "enablerdsaadauth:i:1" not in rdp_text.lower()
         env = dict(os.environ)
         # sdl-freerdp (SDL3) and FreeRDP's own AAD webview are unstable on native
         # Wayland (#2: "Error 71 dispatching to Wayland display"). Force X11 /
@@ -1058,24 +880,30 @@ class AvdApp(Gtk.Application):
         # ignored where unsupported, so always safe.
         env.setdefault("SDL_RENDER_VSYNC", "1")
         env.setdefault("SDL_VIDEO_DOUBLE_BUFFER", "1")
-        if af.SDL_LIBS and os.path.isdir(af.SDL_LIBS):
-            env["LD_LIBRARY_PATH"] = af.SDL_LIBS + (
+        if config.SDL_LIBS and os.path.isdir(config.SDL_LIBS):
+            env["LD_LIBRARY_PATH"] = config.SDL_LIBS + (
                 os.pathsep + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
-        os.makedirs(af.OUT, exist_ok=True)
+        os.makedirs(config.OUT, exist_ok=True)
         safe = _re.sub(r"[^A-Za-z0-9]+", "_", res["title"])[:40]
-        logpath = os.path.join(af.OUT, f"session_{safe}.log")
-        argv = [af.SDL, path, "/gateway:type:arm", "/sec:aad"]
-        if af.UPN:
-            argv.append(f"/u:{af.UPN}")
+        logpath = os.path.join(config.OUT, f"session_{safe}.log")
+        argv = [config.SDL, path, "/gateway:type:arm", "/sec:nla" if nla else "/sec:aad"]
+        if af.upn:
+            argv.append(f"/u:{af.upn}")
         # Remote scale follows the client's display scale (HiDPI → 200%, standard/
         # ultrawide → 100%); AVD_SCALE overrides. Multi-monitor and any other flag
         # are opt-in via AVD_EXTRA_ARGS (e.g. "/multimon /gfx"), until a settings UI.
         # --- display config: env var > per-resource/default setting > auto ---
         extra = self._eff_extra(res)
+        # AVD NLA host pools reject FreeRDP's default "AzureAD" domain — both
+        # reporters on issue #3 connect only with the domain cleared. Send an
+        # empty domain so the user just types their password (a rare pool that
+        # needs "AzureAD" can override with /d: in Advanced flags).
+        if nla and "/d:" not in extra:
+            argv.append("/d:")
         scale = os.environ.get("AVD_SCALE") or self._eff("scale", res) \
             or str(100 * max(1, self._scale))
         argv += ["/sound:sys:pulse", "/microphone", "/cert:tofu",
-                 "/f", f"/scale-desktop:{scale}", "/log-level:info",
+                 f"/scale-desktop:{scale}", "/log-level:info",
                  # bandwidth/quality + resilience + keepalive:
                  "+compression", "+fonts",
                  "+auto-reconnect", "/auto-reconnect-max-retries:10",
@@ -1090,14 +918,14 @@ class AvdApp(Gtk.Application):
         else:
             setting = self._eff("multimon", res)      # "on"/"off"/None
             want_multimon = (setting == "on") if setting else (self._n_monitors > 1)
-        # Don't fight an explicit choice already present in the extra flags.
-        if "multimon" not in extra:
-            argv.append("/multimon" if want_multimon else "-multimon")
-        if extra:
-            try:
-                argv += shlex.split(extra)
-            except ValueError:
-                pass
+        try:
+            argv += build_display_args(path, extra, want_multimon)
+        except (OSError, ValueError) as error:
+            child._launching = False
+            self._set_connecting(res["id"], res["title"], False)
+            self._set_tile_state(res["id"], "● Failed", "state-ended")
+            self._error(f"Could not prepare display settings: {error}")
+            return
         # Launch under a PTY. With FreeRDP built WITHOUT its own AAD webview,
         # /sec:aad prints "Browse to: <url>" and reads the redirect URL back
         # from stdin — but only when it thinks it's attached to a terminal, so
@@ -1273,14 +1101,14 @@ class AvdApp(Gtk.Application):
         for m in ("top", "bottom", "start", "end"):
             getattr(box, f"set_margin_{m}")(16)
 
-        scale_dd = Gtk.DropDown(model=Gtk.StringList.new(SCALE_LABELS))
+        scale_dd = Gtk.DropDown(model=Gtk.StringList.new(storage.SCALE_LABELS))
         sv = cur.get("scale", "auto")
-        scale_dd.set_selected(SCALE_VALUES.index(sv) if sv in SCALE_VALUES else 0)
+        scale_dd.set_selected(storage.SCALE_VALUES.index(sv) if sv in storage.SCALE_VALUES else 0)
         box.append(self._form_row("Display scale", scale_dd))
 
-        mm_dd = Gtk.DropDown(model=Gtk.StringList.new(MULTIMON_LABELS))
+        mm_dd = Gtk.DropDown(model=Gtk.StringList.new(storage.MULTIMON_LABELS))
         mv = cur.get("multimon", "auto")
-        mm_dd.set_selected(MULTIMON_VALUES.index(mv) if mv in MULTIMON_VALUES else 0)
+        mm_dd.set_selected(storage.MULTIMON_VALUES.index(mv) if mv in storage.MULTIMON_VALUES else 0)
         box.append(self._form_row("Monitors", mm_dd))
 
         extra_entry = Gtk.Entry()
@@ -1303,8 +1131,8 @@ class AvdApp(Gtk.Application):
 
         def do_save(*_):
             entry = {
-                "scale": SCALE_VALUES[scale_dd.get_selected()],
-                "multimon": MULTIMON_VALUES[mm_dd.get_selected()],
+                "scale": storage.SCALE_VALUES[scale_dd.get_selected()],
+                "multimon": storage.MULTIMON_VALUES[mm_dd.get_selected()],
                 "extra_args": extra_entry.get_text().strip(),
             }
             # drop an all-default entry so the file stays tidy
@@ -1313,7 +1141,7 @@ class AvdApp(Gtk.Application):
                 self._settings.pop(key, None)
             else:
                 self._settings[key] = entry
-            _save_settings(self._settings)
+            storage.save_settings(self._settings)
             dlg.destroy()
             self._set_status("Settings saved — applies to your next connection")
         save.connect("clicked", do_save)

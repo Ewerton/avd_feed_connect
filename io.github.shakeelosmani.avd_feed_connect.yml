@@ -135,15 +135,25 @@ modules:
     sources:
       - type: git
         url: https://github.com/FreeRDP/FreeRDP.git
-        # Upstream master — the pulse hot-unplug + rdpsnd busy-loop fixes
-        # (PR #13334) were merged here (merge commit below), so we no longer need
-        # the fork. Camera redirection is a build option, enabled via config-opts.
-        commit: 023c2a6d44264fa3a74d7607755279d3ac575637
+        # FreeRDP 3.32.1, the first tag containing everything we previously
+        # pinned master (8b5d1c40) for: the pulse hot-unplug + rdpsnd
+        # busy-loop fixes (PR #13334), the rdpecam stream-drain LED fix
+        # (3.32.0), and the rdpecam media-type validation fix (249d74364a) that
+        # makes V4L camera redirection work. It also picks up later cliprdr
+        # fixes (#13496, #13527); the master snapshot failed local → remote
+        # paste ("No synthesizer for format CF_RAW") and could abort on a WinPR
+        # assert (#7). Camera redirection is a build option, enabled via
+        # config-opts.
+        tag: 3.32.1
+        commit: bf217a504e54cc719880c228e82353382cd7d4fa
 
   # ---- the app itself ----------------------------------------------------
   - name: avd-feed-connect
     buildsystem: simple
     build-commands:
+      - install -d /app/share/avd-feed-connect
+      - cp -r src/avd_feed_connect /app/share/avd-feed-connect/avd_feed_connect
+      - find /app/share/avd-feed-connect/avd_feed_connect -name __pycache__ -type d -exec rm -rf {} +
       - install -Dm755 src/avdfeed.py       /app/share/avd-feed-connect/avdfeed.py
       - install -Dm755 src/avd_feed_gui.py  /app/share/avd-feed-connect/avd_feed_gui.py
       - install -Dm755 avd-feed-connect     /app/bin/avd-feed-connect

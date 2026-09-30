@@ -1,0 +1,160 @@
+"""build_argv: the sdl-freerdp command line for a CLI connection."""
+
+from avd_feed_connect.rdp import build_argv, set_rdp_multimon
+from avd_feed_connect.rdp.launcher import build_display_args
+from avd_feed_connect.rdp.resources import set_rdp_dynamic_resolution
+
+
+def test_dynamic_display_settings_in_freerdp(tmp_path):
+    import ctypes
+    import os
+    import pytest
+
+    if not os.environ.get("AVD_TEST_FREERDP"):
+        pytest.skip("Set AVD_TEST_FREERDP=1 inside the bundled FreeRDP runtime")
+    library = ctypes.CDLL("libfreerdp-client3.so.3")
+    library.freerdp_settings_new.argtypes = [ctypes.c_uint32]
+    library.freerdp_settings_new.restype = ctypes.c_void_p
+    library.freerdp_settings_free.argtypes = [ctypes.c_void_p]
+    library.freerdp_settings_free.restype = None
+    library.freerdp_settings_get_bool.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+    library.freerdp_settings_get_bool.restype = ctypes.c_int
+    library.freerdp_settings_get_name_for_key.argtypes = [ctypes.c_size_t]
+    library.freerdp_settings_get_name_for_key.restype = ctypes.c_char_p
+    parse = library.freerdp_client_settings_parse_command_line
+    parse.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                      ctypes.POINTER(ctypes.c_char_p), ctypes.c_int]
+    parse.restype = ctypes.c_int
+    path = _rdp(tmp_path, "smart sizing:i:1\nscreen mode id:i:2\n"
+                "dynamic resolution:i:1\nuse multimon:i:1\n")
+    args = ["sdl-freerdp", path] + build_display_args(path, "/dynamic-resolution", True)
+    argv = (ctypes.c_char_p * len(args))(*(arg.encode() for arg in args))
+    settings = library.freerdp_settings_new(0)
+    assert settings
+    try:
+        assert parse(settings, len(args), argv, False) == 0
+        expected = {388: ("FreeRDP_UseMultimon", False),
+                    1537: ("FreeRDP_Fullscreen", False),
+                    1551: ("FreeRDP_SmartSizing", False),
+                    1558: ("FreeRDP_DynamicResolutionUpdate", True),
+                    5185: ("FreeRDP_SupportDisplayControl", True)}
+        for key, (name, value) in expected.items():
+            assert library.freerdp_settings_get_name_for_key(key).decode() == name
+            assert bool(library.freerdp_settings_get_bool(settings, key)) == value, name
+    finally:
+        library.freerdp_settings_free(settings)
+
+
+def test_dynamic_resolution_clears_conflicting_feed_settings(tmp_path):
+    path = _rdp(tmp_path, "smart sizing:i:1\nscreen mode id:i:2\nusername:s:u\n")
+    set_rdp_dynamic_resolution(path)
+    lines = open(path).read().splitlines()
+    assert "smart sizing:i:0" in lines
+    assert "smart sizing:i:1" not in lines
+    assert "screen mode id:i:1" in lines
+    assert "screen mode id:i:2" not in lines
+    assert "username:s:u" in lines
+
+
+def test_dynamic_resolution_adds_missing_properties(tmp_path):
+    path = _rdp(tmp_path, "username:s:u\n")
+    set_rdp_dynamic_resolution(path)
+    set_rdp_dynamic_resolution(path)
+    lines = open(path).read().splitlines()
+    assert lines.count("smart sizing:i:0") == 1
+    assert lines.count("screen mode id:i:1") == 1
+
+
+def test_dynamic_display_args_override_conflicting_modes(tmp_path):
+    for flag in ("/dynamic-resolution", "+dynamic-resolution"):
+        for extra in (f"/smart-sizing:1280x720 /f /multimon {flag}",
+                      f"{flag} /smart-sizing +f +multimon"):
+            path = _rdp(tmp_path, "smart sizing:i:1\nuse multimon:i:1\n")
+            args = build_display_args(path, extra + ' /drive:home,"/my folder"', True)
+            assert args == ["-multimon", flag, "/drive:home,/my folder"]
+            assert "smart sizing:i:0" in open(path).read().splitlines()
+            assert "use multimon:i:0" in open(path).read().splitlines()
+
+
+def test_non_dynamic_display_preserves_smart_sizing(tmp_path):
+    path = _rdp(tmp_path, "smart sizing:i:1\n")
+    args = build_display_args(path, "/smart-sizing", True)
+    assert args == ["/f", "/multimon", "/smart-sizing"]
+    assert "smart sizing:i:1" in open(path).read().splitlines()
+
+
+def test_dynamic_flag_must_be_an_enabled_option(tmp_path):
+    for extra in ("-dynamic-resolution", "/dynamic-resolution -dynamic-resolution",
+                  "/drive:dynamic-resolution,/tmp"):
+        path = _rdp(tmp_path, "username:s:u\n")
+        args = build_display_args(path, extra, False)
+        assert args[0] == "/f"
+        assert "smart sizing:i:0" not in open(path).read().splitlines()
+
+
+def test_explicit_single_monitor_updates_feed(tmp_path):
+    path = _rdp(tmp_path, "use multimon:i:1\n")
+    args = build_display_args(path, "-multimon", True)
+    assert "/multimon" not in args
+    assert "use multimon:i:0" in open(path).read().splitlines()
+
+
+def test_malformed_display_args_are_reported(tmp_path):
+    path = _rdp(tmp_path, "username:s:u\n")
+    try:
+        build_display_args(path, '/drive:home,"unterminated', False)
+    except ValueError:
+        return
+    raise AssertionError("Malformed flags must not be silently ignored")
+
+
+def test_argv_core_flags():
+    argv = build_argv("/app/bin/sdl-freerdp", "/tmp/x.rdp", "")
+    assert argv[0] == "/app/bin/sdl-freerdp"
+    assert argv[1] == "/tmp/x.rdp"
+    assert "/gateway:type:arm" in argv
+    assert "/sec:aad" in argv
+    assert "/f" in argv
+    assert "-multimon" in argv
+
+
+def test_argv_includes_user_when_upn_set():
+    argv = build_argv("sdl-freerdp", "x.rdp", "sam@contoso.com")
+    assert "/u:sam@contoso.com" in argv
+
+
+def test_argv_omits_user_when_no_upn():
+    argv = build_argv("sdl-freerdp", "x.rdp", "")
+    assert not any(a.startswith("/u:") for a in argv)
+
+
+def _rdp(tmp_path, body):
+    p = tmp_path / "x.rdp"
+    p.write_text(body)
+    return str(p)
+
+
+def test_multimon_disable_rewrites_existing_property(tmp_path):
+    # AVD feed .rdp ships "use multimon:i:1"; Single monitor must flip it to 0.
+    path = _rdp(tmp_path, "full address:s:host\nuse multimon:i:1\nusername:s:u\n")
+    set_rdp_multimon(path, False)
+    lines = open(path).read().splitlines()
+    assert "use multimon:i:0" in lines
+    assert "use multimon:i:1" not in lines
+    assert "full address:s:host" in lines  # other lines untouched
+
+
+def test_multimon_enable_sets_one(tmp_path):
+    path = _rdp(tmp_path, "use multimon:i:0\n")
+    set_rdp_multimon(path, True)
+    assert "use multimon:i:1" in open(path).read().splitlines()
+
+
+def test_multimon_appends_when_absent(tmp_path):
+    path = _rdp(tmp_path, "full address:s:host\n")
+    set_rdp_multimon(path, False)
+    assert "use multimon:i:0" in open(path).read().splitlines()
+
+
+def test_multimon_missing_file_is_noop(tmp_path):
+    set_rdp_multimon(str(tmp_path / "nope.rdp"), True)  # must not raise
