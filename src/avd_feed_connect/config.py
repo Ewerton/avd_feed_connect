@@ -9,6 +9,7 @@ instead, never here.
 
 import os
 import shutil
+import urllib.parse
 
 # Multi-tenant by default: "organizations" lets any work/school account sign in
 # and the feed returns every workspace that account is entitled to. Override
@@ -52,3 +53,16 @@ def find_sdl_freerdp():
 SDL = find_sdl_freerdp()
 # Only needed unpackaged (Flatpak resolves libs via rpath); empty = don't touch.
 SDL_LIBS = os.environ.get("AVD_SDL_LIBS", os.path.join(HOME, "opt", "sdl3", "lib"))
+
+AAD_LOGIN_HOST = "login.microsoftonline.com"
+
+
+def is_aad_login_url(url):
+    """True only for an https URL on the Entra login host. FreeRDP's "Browse to:"
+    URL is loaded in a WebView that shares our SSO cookies, so nothing else
+    may be loaded there."""
+    try:
+        p = urllib.parse.urlparse(url)
+        return p.scheme == "https" and (p.hostname or "").lower() == AAD_LOGIN_HOST
+    except ValueError:
+        return False

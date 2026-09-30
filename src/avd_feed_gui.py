@@ -1001,9 +1001,17 @@ class AvdApp(Gtk.Application):
             self._set_connecting(res["id"], res["title"], False)  # desktop is up
         if line.startswith("Browse to: "):
             url = line[len("Browse to: "):].strip()
-            if url.startswith("http"):
+            if config.is_aad_login_url(url):
                 # Resolve on the main thread (WebKit must run there).
                 GLib.idle_add(self._resolve_aad, master, url, res)
+            else:
+                # Never load an arbitrary URL in the SSO-cookie WebView; a blank
+                # line makes FreeRDP abort this auth instead of blocking on stdin.
+                print(f"refusing non-Entra AAD URL: {url[:80]}", file=sys.stderr)
+                try:
+                    os.write(master, b"\n")
+                except OSError:
+                    pass
 
     def _resolve_aad(self, master, url, res):
         """Service FreeRDP's connection-time AAD prompt: load its authorize URL
