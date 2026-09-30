@@ -123,6 +123,24 @@ python3 src/avdfeed.py connect 0      # CLI: connect to resource 0
 Override the tenant/account with `AVD_TENANT` / `AVD_UPN`, and the client binary
 with `AVD_SDL_FREERDP`.
 
+> **Use SDL 3.2.x, not a newer system SDL3.** The bundled FreeRDP is built
+> against SDL 3.2.30. Running a locally built `sdl-freerdp` against a newer
+> distro SDL3 (e.g. Arch's 3.4.x) can make every fullscreen (`/f`) launch fail
+> with `Monitor configuration virtual desktop width must be 200 <= 0 <= 32766`
+> — SDL reports a 0×0 display. Build SDL 3.2.30 and install it where the app
+> looks (`~/opt/sdl3`, or point `AVD_SDL_LIBS` at its `lib` dir):
+>
+> ```bash
+> git clone --depth 1 --branch release-3.2.30 https://github.com/libsdl-org/SDL.git
+> cmake -S SDL -B SDL/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+>   -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF \
+>   -DCMAKE_INSTALL_PREFIX=$HOME/opt/sdl3
+> cmake --build SDL/build && cmake --install SDL/build
+> ```
+>
+> The app adds `AVD_SDL_LIBS` (default `~/opt/sdl3/lib`) to `LD_LIBRARY_PATH` for
+> the client when that directory exists, so it is picked up automatically.
+
 ### Connection tuning
 
 The session **auto-adapts to your machine** — it reads your display layout from
