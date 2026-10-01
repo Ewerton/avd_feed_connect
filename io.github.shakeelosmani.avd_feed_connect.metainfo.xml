@@ -60,6 +60,16 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.4" date="2026-09-30">
+      <description>
+        <ul>
+          <li>Security hardening: the sign-in page shown when connecting is now
+          restricted to the official Microsoft Entra login address, so a
+          misbehaving remote host can't point that window (which carries your
+          signed-in session) at any other site.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.3" date="2026-09-29">
       <description>
         <ul>
