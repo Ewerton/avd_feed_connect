@@ -60,6 +60,18 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.5" date="2026-10-02">
+      <description>
+        <ul>
+          <li>The app now verifies the remote host's certificate by default,
+          pinning it on first connect and refusing the session if it later
+          changes — protection against a man-in-the-middle. If a host pool's
+          certificates rotate and this blocks you from connecting, a new
+          per-workspace "Server certificate" setting lets you turn verification
+          off again.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.4" date="2026-09-30">
       <description>
         <ul>

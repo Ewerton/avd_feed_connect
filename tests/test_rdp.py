@@ -128,6 +128,20 @@ def test_argv_omits_user_when_no_upn():
     assert not any(a.startswith("/u:") for a in argv)
 
 
+def test_argv_verifies_cert_by_default(monkeypatch):
+    monkeypatch.delenv("AVD_CERT", raising=False)
+    argv = build_argv("sdl-freerdp", "x.rdp", "")
+    assert "/cert:tofu" in argv
+    assert "/cert:ignore" not in argv
+
+
+def test_argv_cert_ignore_opt_out(monkeypatch):
+    monkeypatch.setenv("AVD_CERT", "ignore")
+    argv = build_argv("sdl-freerdp", "x.rdp", "")
+    assert "/cert:ignore" in argv
+    assert "/cert:tofu" not in argv
+
+
 def _rdp(tmp_path, body):
     p = tmp_path / "x.rdp"
     p.write_text(body)
