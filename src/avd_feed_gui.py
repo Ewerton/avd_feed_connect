@@ -70,7 +70,7 @@ af = AvdClient()
 
 APP_ID = "io.github.shakeelosmani.avd_feed_connect"
 APP_NAME = "AVD Feed + Connect Linux"
-APP_VERSION = "0.4.4"
+APP_VERSION = "0.4.5"
 
 
 
@@ -902,7 +902,13 @@ class AvdApp(Gtk.Application):
             argv.append("/d:")
         scale = os.environ.get("AVD_SCALE") or self._eff("scale", res) \
             or str(100 * max(1, self._scale))
-        argv += ["/sound:sys:pulse", "/microphone", "/cert:ignore",
+        # Pin the host cert on first use by default; only turn the check off if
+        # the user opted out (e.g. a pooled host pool whose certs rotate). Env
+        # override: AVD_CERT=ignore / verify.
+        cert_mode = os.environ.get("AVD_CERT", "").strip().lower() \
+            or self._eff("cert", res)
+        cert_flag = "/cert:ignore" if cert_mode == "ignore" else "/cert:tofu"
+        argv += ["/sound:sys:pulse", "/microphone", cert_flag,
                  f"/scale-desktop:{scale}", "/log-level:info",
                  # bandwidth/quality + resilience + keepalive:
                  "+compression", "+fonts",
@@ -1119,6 +1125,11 @@ class AvdApp(Gtk.Application):
         mm_dd.set_selected(storage.MULTIMON_VALUES.index(mv) if mv in storage.MULTIMON_VALUES else 0)
         box.append(self._form_row("Monitors", mm_dd))
 
+        cert_dd = Gtk.DropDown(model=Gtk.StringList.new(storage.CERT_LABELS))
+        cv = cur.get("cert", "auto")
+        cert_dd.set_selected(storage.CERT_VALUES.index(cv) if cv in storage.CERT_VALUES else 0)
+        box.append(self._form_row("Server certificate", cert_dd))
+
         extra_entry = Gtk.Entry()
         extra_entry.set_text(cur.get("extra_args", ""))
         extra_entry.set_placeholder_text("advanced: e.g. /gfx /network:auto")
@@ -1141,11 +1152,12 @@ class AvdApp(Gtk.Application):
             entry = {
                 "scale": storage.SCALE_VALUES[scale_dd.get_selected()],
                 "multimon": storage.MULTIMON_VALUES[mm_dd.get_selected()],
+                "cert": storage.CERT_VALUES[cert_dd.get_selected()],
                 "extra_args": extra_entry.get_text().strip(),
             }
             # drop an all-default entry so the file stays tidy
             if entry["scale"] == "auto" and entry["multimon"] == "auto" \
-                    and not entry["extra_args"]:
+                    and entry["cert"] == "auto" and not entry["extra_args"]:
                 self._settings.pop(key, None)
             else:
                 self._settings[key] = entry

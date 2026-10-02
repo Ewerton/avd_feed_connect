@@ -45,7 +45,11 @@ def build_argv(sdl, path, upn):
     argv = [sdl, path, "/gateway:type:arm", "/sec:aad"]
     if upn:
         argv.append(f"/u:{upn}")
-    argv += ["/sound:sys:pulse", "/microphone", "/cert:ignore",
+    # Pin the host cert on first use by default; AVD_CERT=ignore turns the check
+    # off for host pools whose session-host certs rotate.
+    cert_flag = "/cert:ignore" if os.environ.get("AVD_CERT", "").strip().lower() \
+        == "ignore" else "/cert:tofu"
+    argv += ["/sound:sys:pulse", "/microphone", cert_flag,
              "/f", "/scale-desktop:200", "-multimon", "/log-level:info"]
     return argv
 
