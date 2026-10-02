@@ -66,3 +66,20 @@ def is_aad_login_url(url):
         return p.scheme == "https" and (p.hostname or "").lower() == AAD_LOGIN_HOST
     except ValueError:
         return False
+
+
+# Hosts a bearer token may be sent to. Feed XML supplies the feed, .rdp and icon
+# URLs, so they are checked before the Authorization header is attached.
+TRUSTED_SUFFIXES = (".microsoft.com", ".microsoftonline.com")
+
+
+def is_trusted_url(url):
+    """True only for an https URL on a Microsoft host (dot-boundary match, so
+    ``evilmicrosoft.com`` and ``microsoft.com.evil.io`` are rejected)."""
+    try:
+        p = urllib.parse.urlparse(url)
+        host = (p.hostname or "").lower()
+    except ValueError:
+        return False
+    return p.scheme == "https" and any(
+        host == s[1:] or host.endswith(s) for s in TRUSTED_SUFFIXES)

@@ -11,6 +11,13 @@ import urllib.request
 from . import config
 
 
+def check_trusted(url):
+    """Refuse to attach a bearer token to a non-Microsoft or non-https URL."""
+    if not config.is_trusted_url(url):
+        host = urllib.parse.urlparse(url).hostname
+        raise ValueError(f"refusing to send token to untrusted URL (host: {host})")
+
+
 def post(url, data):
     """POST form-encoded ``data`` and return ``(status, parsed_json)``.
 
@@ -33,6 +40,7 @@ def get(url, token, accept="*/*"):
     Returns ``(status, headers_dict, body_text)``; HTTP errors return the error
     response rather than raising.
     """
+    check_trusted(url)
     req = urllib.request.Request(url)
     req.add_header("Authorization", "Bearer " + token)
     req.add_header("Accept", accept)
