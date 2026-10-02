@@ -60,6 +60,17 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.6" date="2026-10-02">
+      <description>
+        <ul>
+          <li>Security hardening: your sign-in token is now only ever sent to
+          Microsoft hosts. Previously the server-supplied feed, connection, and
+          icon addresses were trusted as-is, so a tampered feed response could
+          have directed the token elsewhere; those addresses are now checked
+          first.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.5" date="2026-10-02">
       <description>
         <ul>
