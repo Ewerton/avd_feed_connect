@@ -157,13 +157,25 @@ override it, the easiest way is right inside the app.
 #### In-app settings (no terminal, remembered per workspace)
 
 - **Per workspace:** right-click a workspace tile → set its **Display scale**,
-  **Monitors** (single / all / automatic), and any **Advanced flags**. These are
-  remembered per resource, so a RemoteApp and a full Desktop can differ.
+  **Monitors** (single / all / automatic), **Server certificate**, and any
+  **Advanced flags**. These are remembered per resource, so a RemoteApp and a
+  full Desktop can differ.
 - **Defaults for everything:** the **⋯ menu → Default settings…** sets the
   fallback used by any workspace left on "Automatic".
 
 Precedence is: a workspace's own setting → your Default settings → automatic
 detection. (Environment variables, below, override even these — for scripting.)
+
+**Server certificate (verify / don't verify).** By default the app **verifies
+the session host's certificate**, pinning it on first connect (FreeRDP's
+trust-on-first-use) and refusing the session if that certificate later changes —
+protection against a man-in-the-middle. **If you can't connect** — a
+"certificate changed" / verification error, common on **pooled** host pools
+whose session hosts present different certificates each time, or after a host is
+rebuilt — set **Server certificate → Don't verify** for that workspace (or in
+Default settings). That restores the old behaviour of accepting any certificate.
+Leave it on **Verify** whenever you can; only turn it off if it's actually
+blocking you. (Scripting override: `AVD_CERT=ignore` or `AVD_CERT=verify`.)
 
 **Resizable window (dynamic resolution):** by default the session opens
 fullscreen. If you'd rather have a resizable window whose remote resolution

@@ -27,6 +27,12 @@ SCALE_LABELS = ["Automatic (match display)", "100%", "125%", "150%",
 SCALE_VALUES = ["auto", "100", "125", "150", "175", "200", "250", "300"]
 MULTIMON_LABELS = ["Automatic (match monitors)", "Single monitor", "All monitors"]
 MULTIMON_VALUES = ["auto", "off", "on"]
+# Server-certificate handling. Anything but "ignore" pins the host cert on first
+# connect (FreeRDP /cert:tofu); "ignore" turns the check off (/cert:ignore) — the
+# escape hatch for host pools whose session-host certs rotate. "auto" inherits the
+# default, which is itself verify, so the secure mode is the out-of-the-box one.
+CERT_LABELS = ["Automatic (verify)", "Verify", "Don't verify (if you can't connect)"]
+CERT_VALUES = ["auto", "verify", "ignore"]
 
 
 def icon_path(res_id):
