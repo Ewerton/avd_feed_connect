@@ -123,6 +123,24 @@ python3 src/avdfeed.py connect 0      # CLI: connect to resource 0
 Override the tenant/account with `AVD_TENANT` / `AVD_UPN`, and the client binary
 with `AVD_SDL_FREERDP`.
 
+> **Use SDL 3.2.x, not a newer system SDL3.** The bundled FreeRDP is built
+> against SDL 3.2.30. Running a locally built `sdl-freerdp` against a newer
+> distro SDL3 (e.g. Arch's 3.4.x) can make every fullscreen (`/f`) launch fail
+> with `Monitor configuration virtual desktop width must be 200 <= 0 <= 32766`
+> — SDL reports a 0×0 display. Build SDL 3.2.30 and install it where the app
+> looks (`~/opt/sdl3`, or point `AVD_SDL_LIBS` at its `lib` dir):
+>
+> ```bash
+> git clone --depth 1 --branch release-3.2.30 https://github.com/libsdl-org/SDL.git
+> cmake -S SDL -B SDL/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+>   -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF \
+>   -DCMAKE_INSTALL_PREFIX=$HOME/opt/sdl3
+> cmake --build SDL/build && cmake --install SDL/build
+> ```
+>
+> The app adds `AVD_SDL_LIBS` (default `~/opt/sdl3/lib`) to `LD_LIBRARY_PATH` for
+> the client when that directory exists, so it is picked up automatically.
+
 ### Connection tuning
 
 The session **auto-adapts to your machine** — it reads your display layout from
@@ -139,7 +157,7 @@ override it, the easiest way is right inside the app.
 #### In-app settings (no terminal, remembered per workspace)
 
 - **Per workspace:** right-click a workspace tile → set its **Display scale**,
-  **Monitors** (single / all / automatic), **Server certificate**, and any
+  **Monitors** (single / all / automatic), **Server certificate**, **Client shortcuts**, and any
   **Advanced flags**. These are remembered per resource, so a RemoteApp and a
   full Desktop can differ.
 - **Defaults for everything:** the **⋯ menu → Default settings…** sets the
@@ -158,6 +176,15 @@ rebuilt — set **Server certificate → Don't verify** for that workspace (or i
 Default settings). That restores the old behaviour of accepting any certificate.
 Leave it on **Verify** whenever you can; only turn it off if it's actually
 blocking you. (Scripting override: `AVD_CERT=ignore` or `AVD_CERT=verify`.)
+
+**Client shortcuts (Right Shift + key).** The bundled SDL client reserves
+Right Shift + key for its own shortcuts (D disconnects, Enter toggles
+fullscreen, R resizable, G keyboard grab, M minimize), so those keys never reach
+the remote desktop — and if Right Shift is seen as held (e.g. a stuck modifier
+under XWayland), an ordinary Ctrl+D can end the session. Set **Client
+shortcuts → Disabled** to pass every key through. The choice is written to
+FreeRDP's own `~/.config/freerdp/sdl-freerdp.json` (`SDL_KeyModMask`) on each
+connect; **Automatic** leaves that file untouched.
 
 **Resizable window (dynamic resolution):** by default the session opens
 fullscreen. If you'd rather have a resizable window whose remote resolution
