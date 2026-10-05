@@ -157,7 +157,7 @@ override it, the easiest way is right inside the app.
 #### In-app settings (no terminal, remembered per workspace)
 
 - **Per workspace:** right-click a workspace tile → set its **Display scale**,
-  **Monitors** (single / all / automatic), **Server certificate**, and any
+  **Monitors** (single / all / automatic), **Server certificate**, **Client shortcuts**, and any
   **Advanced flags**. These are remembered per resource, so a RemoteApp and a
   full Desktop can differ.
 - **Defaults for everything:** the **⋯ menu → Default settings…** sets the
@@ -176,6 +176,15 @@ rebuilt — set **Server certificate → Don't verify** for that workspace (or i
 Default settings). That restores the old behaviour of accepting any certificate.
 Leave it on **Verify** whenever you can; only turn it off if it's actually
 blocking you. (Scripting override: `AVD_CERT=ignore` or `AVD_CERT=verify`.)
+
+**Client shortcuts (Right Shift + key).** The bundled SDL client reserves
+Right Shift + key for its own shortcuts (D disconnects, Enter toggles
+fullscreen, R resizable, G keyboard grab, M minimize), so those keys never reach
+the remote desktop — and if Right Shift is seen as held (e.g. a stuck modifier
+under XWayland), an ordinary Ctrl+D can end the session. Set **Client
+shortcuts → Disabled** to pass every key through. The choice is written to
+FreeRDP's own `~/.config/freerdp/sdl-freerdp.json` (`SDL_KeyModMask`) on each
+connect; **Automatic** leaves that file untouched.
 
 **Resizable window (dynamic resolution):** by default the session opens
 fullscreen. If you'd rather have a resizable window whose remote resolution
