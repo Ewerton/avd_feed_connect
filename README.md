@@ -312,6 +312,30 @@ gateway — the password is only for the session-host logon.
 - If your host pool needs a specific domain instead of the empty default, set it
   in a workspace's **Advanced flags** (e.g. `/d:AzureAD`).
 
+## Microsoft Teams calls (no media optimization)
+
+Teams **chat and file sharing work**, but Teams **calls and meetings are not
+media-optimized** with this client. Microsoft's Teams optimization — the
+*WebRTC Redirector* that hands call audio/video to the client over a dedicated
+virtual channel — is only implemented in the official Windows App and Microsoft
+Remote Desktop clients. FreeRDP has no such channel, so inside the session Teams
+falls back to running call media **on the session host itself** (you won't see
+the "AVD Media Optimized" banner).
+
+That fallback only works if the **session host** can reach Teams' media relays
+directly — in particular outbound **UDP 3478–3481** to the Teams/Microsoft 365
+media IP ranges. On host pools where that egress is locked down, calls started
+inside the session fail to connect (Teams logs a `MediaWhitelistingIssue` /
+`no relays` ICE error) even though the same account places calls fine from the
+Windows App, where media is redirected to the local device instead.
+
+Your microphone and camera themselves still reach the session via normal device
+redirection; this is specifically about Teams' optimized call path. Options if
+you need calls: ask your admins to permit the session host's outbound UDP to the
+Teams relays, or place the call from a Teams client outside the VM. Implementing
+the redirector itself is a large, Microsoft-specific protocol effort and is out
+of scope for now.
+
 ## Status
 
 Working: feed discovery, keyring-backed sign-in with click-through re-auth,
