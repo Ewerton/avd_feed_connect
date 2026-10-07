@@ -22,8 +22,9 @@ camera/mic/gfx behave exactly as before.
 
 A tray icon (gui.tray, StatusNotifierItem over plain D-Bus — GTK4 has no tray
 API) lists every resource by workspace with Connect / Connect (windowed) /
-Focus window / Disconnect, and closing the window hides it there while a tray
-host is present (AVD_TRAY=0 turns the tray off).
+Focus window / Disconnect. Opt-in (account menu), while a tray host is present:
+closing the window hides it to the tray, and the app can start hidden there.
+AVD_TRAY=0 turns the tray off.
 
 Runtime: PyGObject with Gtk 4.0, WebKit 6.0 (all in the GNOME 51 Flatpak
 runtime).
@@ -119,6 +120,8 @@ class AvdApp(Gtk.Application):
         self._connecting = set()      # resource ids currently establishing a session
         self._tray = None             # TrayIcon, unless AVD_TRAY=0 or no session bus
         self._sessions = {}           # resource id → "connecting"/"connected" (tray state)
+        self._tray_toggles = []       # account-menu tray options (need a tray host)
+        self._start_hidden_source = 0  # timeout giving up on "start in the tray"
 
     # ---- app lifecycle ----------------------------------------------------
     def do_activate(self):
@@ -126,9 +129,22 @@ class AvdApp(Gtk.Application):
             self.win.present()
             return
         self._build_ui()
-        self.win.present()
+        # "Start in the tray" only applies to a saved session (a first run must
+        # show sign-in) and only once a tray host accepts the icon; otherwise
+        # the window is shown after a short wait, as it would have been.
+        start_hidden = bool(self._settings.get("_start_in_tray")
+                            and not os.environ.get("AVD_DEMO")
+                            and storage.load_ws_cache()[0])
+        if not start_hidden:
+            self.win.present()
         self._detect_displays()
         self._start_tray()
+        if start_hidden:
+            if self._tray:
+                self._start_hidden_source = GLib.timeout_add_seconds(
+                    3, self._start_hidden_timeout)
+            else:
+                self.win.present()
         # Dev/screenshot mode: show a fixed, anonymous sample feed (no network,
         # no sign-in). Used for documentation screenshots so they carry no real
         # account or org details. Never triggered in normal use.
@@ -158,14 +174,17 @@ class AvdApp(Gtk.Application):
         remote session matches it automatically (like the Windows App does):
         number of monitors → single vs multi-monitor, and the HiDPI scale."""
         try:
-            self._scale = self.win.get_scale_factor() or 1
-        except Exception:
-            self._scale = 1
-        try:
             mons = Gdk.Display.get_default().get_monitors()
             self._n_monitors = max(1, mons.get_n_items())
         except Exception:
-            self._n_monitors = 1
+            mons, self._n_monitors = None, 1
+        try:
+            if self.win.get_mapped() or not mons:
+                self._scale = self.win.get_scale_factor() or 1
+            else:   # started hidden in the tray: no window yet, ask the monitor
+                self._scale = mons.get_item(0).get_scale_factor() or 1
+        except Exception:
+            self._scale = 1
 
     def _background_refresh(self):
         """Silently refresh the token and re-fetch the feed, keeping the cached
@@ -284,6 +303,22 @@ class AvdApp(Gtk.Application):
             b.connect("toggled", lambda btn, k=key: btn.get_active() and self._set_theme(k))
             seg.append(b)
         pbox.append(seg)
+        pbox.append(Gtk.Separator())
+
+        # System tray options (off by default, so closing still quits unless
+        # asked). Insensitive until a tray host shows our icon.
+        trayh = Gtk.Label(label="SYSTEM TRAY", xalign=0); trayh.add_css_class("menu-head")
+        trayh.set_margin_start(4); trayh.set_margin_top(2)
+        pbox.append(trayh)
+        for key, label in (("_close_to_tray", "Keep running in the tray when closed"),
+                           ("_start_in_tray", "Start in the tray")):
+            cb = Gtk.CheckButton(label=label)
+            cb.set_active(bool(self._settings.get(key)))
+            cb.set_sensitive(False)
+            cb.set_tooltip_text("Needs a system tray on your desktop")
+            cb.connect("toggled", lambda btn, k=key: self._set_tray_option(k, btn.get_active()))
+            pbox.append(cb)
+            self._tray_toggles.append(cb)
         pbox.append(Gtk.Separator())
 
         setbtn = Gtk.Button(label="Default settings…"); setbtn.add_css_class("flat")
@@ -1164,15 +1199,36 @@ class AvdApp(Gtk.Application):
             self.win.set_visible(True)
             self.win.present()
 
+    def _set_tray_option(self, key, on):
+        """Persist a tray checkbox (close-to-tray / start-in-tray)."""
+        if on:
+            self._settings[key] = True
+        else:
+            self._settings.pop(key, None)
+        storage.save_settings(self._settings)
+
     def _on_close_request(self, win):
-        # With a tray to bring it back, closing only hides the window (sessions
-        # and the token refresh keep running); otherwise close quits as before.
-        if self._tray and self._tray.available:
+        # Opted in and a tray can bring it back: closing only hides the window
+        # (sessions and the token refresh keep running). Otherwise close quits.
+        if self._settings.get("_close_to_tray") and self._tray and self._tray.available:
             win.set_visible(False)
             return True
         return False
 
+    def _start_hidden_timeout(self):
+        # Started in the tray, but no tray host took the icon: show the window.
+        self._start_hidden_source = 0
+        self._show_window()
+        return False
+
     def _on_tray_availability(self, available):
+        for cb in self._tray_toggles:
+            cb.set_sensitive(available)
+            cb.set_tooltip_text(None if available else "Needs a system tray on your desktop")
+        if available and self._start_hidden_source:
+            # Started in the tray and the icon is up: stay hidden.
+            GLib.source_remove(self._start_hidden_source)
+            self._start_hidden_source = 0
         # The tray host went away (e.g. the bar restarted or was closed): never
         # leave the window hidden with no way back.
         if not available and self.win and not self.win.get_visible():
