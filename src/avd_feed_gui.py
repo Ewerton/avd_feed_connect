@@ -571,7 +571,6 @@ class AvdApp(Gtk.Application):
         if self._signin_dlg is not None:
             old, self._signin_dlg = self._signin_dlg, None
             old.destroy()
-        self._show_window()     # e.g. started from the tray while hidden
         verifier = _b64url(secrets.token_bytes(64))
         challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
         state = secrets.token_urlsafe(16)
@@ -593,7 +592,11 @@ class AvdApp(Gtk.Application):
             params["login_hint"] = af.upn   # preselect the known account in the picker
         url = config.LOGIN + "/authorize?" + urllib.parse.urlencode(params)
 
-        dlg = Gtk.Window(title="Sign in", transient_for=self.win, modal=True)
+        # With the main window hidden in the tray (e.g. a tray-initiated
+        # connect), show the sign-in on its own instead of surfacing the app:
+        # a standalone top-level, since a modal dialog needs a visible parent.
+        parent = self.win if self.win and self.win.get_visible() else None
+        dlg = Gtk.Window(title="Sign in", transient_for=parent, modal=parent is not None)
         dlg.set_default_size(520, 640)
         # Shared PERSISTENT session (SSO cookies kept on disk) so a re-auth is a
         # click-through and the connection-time token can be fetched silently.
